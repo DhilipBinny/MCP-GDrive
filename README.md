@@ -110,6 +110,10 @@ Place your OAuth client secret in one of these locations:
 Run the one-time auth flow:
 
 ```bash
+# If installed from GitHub (Option 1):
+uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
+
+# If using local clone (Option 2):
 uv run google-docs-mcp auth
 ```
 
