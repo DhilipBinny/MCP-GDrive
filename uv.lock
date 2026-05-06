@@ -357,8 +357,8 @@ wheels = [
 ]
 
 [[package]]
-name = "google-docs-mcp"
-version = "0.1.0"
+name = "google-workspace-mcp"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-api-python-client" },

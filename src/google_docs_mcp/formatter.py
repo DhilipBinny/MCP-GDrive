@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .utils import utf16_len
+from shared.utils import utf16_len
 from . import docs_service
 
 

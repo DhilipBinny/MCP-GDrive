@@ -12,7 +12,7 @@ import mistune
 from mistune.plugins.table import table as table_plugin
 from mistune.plugins.formatting import strikethrough as strikethrough_plugin
 
-from .utils import utf16_len
+from shared.utils import utf16_len
 
 PT = "PT"
 

@@ -12,8 +12,9 @@ logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 from mcp.server.fastmcp import FastMCP
 from googleapiclient.errors import HttpError
 
-from . import docs_service, drive_service, formatter
+from . import docs_service, formatter
 from .markdown_parser import markdown_to_requests
+from shared import drive_service
 
 mcp = FastMCP(
     "google-docs-mcp",
@@ -344,7 +345,7 @@ def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> s
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "auth":
-        from .auth import run_auth_flow
+        from shared.auth import run_auth_flow
         run_auth_flow()
         return
     mcp.run(transport="stdio")

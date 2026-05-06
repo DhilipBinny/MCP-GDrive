@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from googleapiclient.discovery import build
 
-from .auth import get_credentials
-from .utils import execute_with_retry, batch_update as _batch_update
+from shared.auth import get_credentials
+from shared.utils import execute_with_retry, batch_update as _batch_update
 
 _service = None
 

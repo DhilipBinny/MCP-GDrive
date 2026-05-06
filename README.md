@@ -1,6 +1,6 @@
-# GDriveMcp
+# Google Workspace MCP
 
-**MCP server for Google Docs — create, read, and write formatted documents with Markdown.**
+**Three MCP servers for Google Docs, Sheets, and Slides — 52 tools for Claude Code.**
 
 [![License](https://img.shields.io/github/license/DhilipBinny/GDriveMcp)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
@@ -10,26 +10,11 @@
 
 ## About
 
-GDriveMcp connects Claude Code to Google Docs and Google Drive. Write a full Markdown document and it becomes a properly formatted Google Doc in one call — headings, bold, italic, tables, code blocks, bullet lists, and more. No more hand-crafting `batchUpdate` JSON.
+Three focused MCP servers that give Claude Code full access to Google Workspace. Write formatted documents with Markdown, manage spreadsheets with charts and formulas, and create presentations with diagrams — all from the terminal.
 
-Built for engineers who use Claude Code daily and need to create, read, and edit Google Docs without leaving the terminal.
+## Servers
 
-## Features
-
-- **Markdown to Google Docs** — full Markdown rendered as native Google Docs formatting in a single API call
-- **13 tools** covering Docs creation, reading, writing, formatting, and Drive file management
-- **Rich formatting** — headings, bold, italic, strikethrough, inline code, links, blockquotes
-- **Tables** — pipe-format Markdown tables with bold headers
-- **Code blocks** — monospace font with grey background (1x1 table styling)
-- **Bullet and numbered lists** — including nested lists
-- **Find & replace, highlight, audit, cleanup** — document maintenance tools
-- **Read as Markdown** — round-trip: write Markdown in, read Markdown out
-- **Dual auth** — OAuth 2.0 (personal use) or Service Account (headless/team)
-- **Safe delete** — trash with `confirm=true` guard + Claude Code permission prompt
-
-## Tools
-
-### Google Docs (`gdocs_*`)
+### Google Docs MCP — 13 tools
 
 | Tool | Description |
 |------|-------------|
@@ -42,15 +27,59 @@ Built for engineers who use Claude Code daily and need to create, read, and edit
 | `gdocs_highlight` | Highlight text occurrences in a color |
 | `gdocs_cleanup` | Remove consecutive blank paragraphs |
 | `gdocs_audit` | Report on formatting quality, fonts, headings |
+| `gdrive_search` | Search files by name or content |
+| `gdrive_list_folder` | List files in a folder |
+| `gdrive_move` | Move any file to a different folder |
+| `gdrive_delete` | Trash a file (recoverable 30 days, requires `confirm=true`) |
 
-### Google Drive (`gdrive_*`)
+### Google Sheets MCP — 19 tools
 
 | Tool | Description |
 |------|-------------|
-| `gdrive_search` | Search files by name or content |
-| `gdrive_list_folder` | List files in a folder (or root) |
-| `gdrive_move` | Move any file to a different folder |
-| `gdrive_delete` | Trash a file (recoverable 30 days, requires `confirm=true`) |
+| `gsheets_create` | Create spreadsheet with optional tab names + folder |
+| `gsheets_get_info` | List tabs with row/col counts, title, URL |
+| `gsheets_read` | Read range as markdown table (formatted/raw/formula) |
+| `gsheets_write` | Write 2D array to a range (supports formulas, dates) |
+| `gsheets_append` | Append rows after last data |
+| `gsheets_clear` | Clear values in range (keeps formatting) |
+| `gsheets_find` | Search text across all cells/sheets |
+| `gsheets_format` | Bold, italic, colors, alignment, number format |
+| `gsheets_add_sheet` | Add a new tab |
+| `gsheets_delete_sheet` | Delete a tab |
+| `gsheets_rename_sheet` | Rename a tab |
+| `gsheets_freeze` | Freeze rows/columns + auto-resize |
+| `gsheets_sort` | Sort data by column |
+| `gsheets_add_chart` | Insert chart (COLUMN, BAR, LINE, AREA, SCATTER, PIE, DONUT) |
+| `gsheets_delete_chart` | Delete a chart by ID |
+| `gdrive_search` | Search files |
+| `gdrive_list_folder` | List folder contents |
+| `gdrive_move` | Move file to folder |
+| `gdrive_delete` | Trash file (confirm required) |
+
+### Google Slides MCP — 20 tools
+
+| Tool | Description |
+|------|-------------|
+| `gslides_create` | Create presentation, optional folder |
+| `gslides_read` | Read all slides (text, tables, structure) |
+| `gslides_add_slide` | Add slide with title/body/layout |
+| `gslides_add_table_slide` | Add slide with formatted table |
+| `gslides_add_image_slide` | Add slide with positioned image or background |
+| `gslides_delete_slide` | Delete a slide |
+| `gslides_add_shape` | Add positioned shape with text and styling |
+| `gslides_add_connector` | Connect two shapes with arrow |
+| `gslides_add_text_box` | Add positioned text label |
+| `gslides_add_diagram` | Create full diagram with auto-positioned nodes |
+| `gslides_import_drawio` | Import draw.io XML as native Slides shapes |
+| `gslides_search_shapes` | Search curated shape library (58 shapes) |
+| `gslides_replace_text` | Find/replace across all slides (template fill) |
+| `gslides_replace_image` | Replace placeholder shapes with images |
+| `gslides_set_speaker_notes` | Set speaker notes on a slide |
+| `gslides_duplicate_slide` | Clone a slide |
+| `gdrive_search` | Search files |
+| `gdrive_list_folder` | List folder contents |
+| `gdrive_move` | Move file to folder |
+| `gdrive_delete` | Trash file (confirm required) |
 
 ## Getting Started
 
@@ -58,8 +87,8 @@ Built for engineers who use Claude Code daily and need to create, read, and edit
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) package manager
-- A Google Cloud project with **Docs API** and **Drive API** enabled
-- An OAuth 2.0 client ID (Desktop type) — download the `client_secret.json`
+- A Google Cloud project with **Docs**, **Sheets**, **Slides**, and **Drive** APIs enabled
+- An OAuth 2.0 client ID (Desktop type)
 
 ### Install
 
@@ -75,28 +104,31 @@ Place your OAuth client secret in one of these locations:
 
 ```
 ~/.config/google-docs-mcp/client_secret.json   (preferred)
-~/.config/gws/client_secret.json               (fallback — reuses gws CLI creds)
+~/.config/gws/client_secret.json               (fallback)
 ```
 
-Then run the one-time auth flow:
+Run the one-time auth flow:
 
 ```bash
 uv run google-docs-mcp auth
 ```
 
-This opens your browser for Google OAuth. The refresh token is saved to `~/.config/google-docs-mcp/token.json` and auto-refreshes silently — no browser needed again.
+This opens your browser for Google OAuth. The token saves to `~/.config/google-docs-mcp/token.json` and auto-refreshes — no browser needed again.
 
 ### Add to Claude Code
 
 ```bash
+# Add the servers you need (one, two, or all three)
 claude mcp add google-docs -- uv run --directory /path/to/GDriveMcp google-docs-mcp
+claude mcp add google-sheets -- uv run --directory /path/to/GDriveMcp google-sheets-mcp
+claude mcp add google-slides -- uv run --directory /path/to/GDriveMcp google-slides-mcp
 ```
 
-Restart Claude Code. The 13 tools are now available.
+Restart Claude Code. The tools are now available.
 
 ### Service Account (headless/team use)
 
-For servers without a browser, use a Google Cloud service account instead:
+For servers without a browser:
 
 ```bash
 export GOOGLE_SERVICE_ACCOUNT_KEY=/path/to/service-account-key.json
@@ -106,34 +138,50 @@ export GOOGLE_IMPERSONATE_USER=user@yourdomain.com  # optional, for Workspace
 ## Architecture
 
 ```
-src/google_docs_mcp/
-  server.py            FastMCP server + 13 tool definitions
-  auth.py              Dual auth: OAuth 2.0 + Service Account
-  markdown_parser.py   Markdown AST -> Google Docs batchUpdate requests
-  docs_service.py      Google Docs API wrapper
-  drive_service.py     Google Drive API wrapper
-  formatter.py         Highlight, cleanup, audit utilities
-  utils.py             UTF-16 index math, retry logic, batch helpers
+src/
+  shared/                  Auth, Drive, utilities (shared by all 3 servers)
+    auth.py                Dual auth: OAuth 2.0 + Service Account
+    drive_service.py       Google Drive API wrapper
+    utils.py               Retry logic, color parsing, A1 notation helpers
+
+  google_docs_mcp/         Google Docs server (13 tools)
+    server.py              FastMCP tool definitions
+    docs_service.py        Google Docs API wrapper
+    markdown_parser.py     Markdown AST → Google Docs batchUpdate requests
+    formatter.py           Highlight, cleanup, audit utilities
+
+  google_sheets_mcp/       Google Sheets server (19 tools)
+    server.py              FastMCP tool definitions
+    sheets_service.py      Google Sheets API wrapper
+
+  google_slides_mcp/       Google Slides server (20 tools)
+    server.py              FastMCP tool definitions
+    slides_service.py      Google Slides API wrapper
+    drawio_converter.py    draw.io XML → native Slides shapes converter
+    shape_search.py        Curated shape library search (58 shapes)
+    shape-index.json       Shape definitions (10KB)
 ```
-
-### How Markdown-to-Docs Works
-
-1. **Parse** — Markdown text is parsed to an AST using [mistune](https://github.com/lepture/mistune) v3
-2. **Generate** — The AST is walked to build Google Docs API `batchUpdate` requests (insert text, apply styles, create bullets, populate table cells)
-3. **Apply** — All requests are sent in a single API call, with table cell indices calculated using an empirically verified formula
 
 ### Key Design Decisions
 
-- **Named styles over manual formatting** — headings use `HEADING_1`, `HEADING_2`, etc. and inherit the document's own font/spacing defaults
-- **Table cell index formula** — empirically verified: `Cell(r,c) paragraph = insertIndex + 4 + r*(2*cols+1) + c*2`
-- **Bullet cleanup** — `deleteParagraphBullets` is emitted for all non-list paragraphs to prevent inherited list styles from pre-existing document content
-- **Reverse cell insertion** — table cells are populated in reverse order to avoid index shifts
+- **Three servers, shared auth** — install only what you need, one OAuth token covers all
+- **Markdown-to-Docs engine** — headings, bold, italic, tables, code blocks, bullet lists in one API call
+- **draw.io XML import** — Claude generates mxGraph XML, converter creates native Slides shapes with auto-routed connectors via `RerouteLineRequest`
+- **Modern style guide** — soft pastel colors, rounded corners, thin strokes (draw.io default palette)
+- **Safe delete** — `confirm=true` parameter + Claude Code permission prompt + trash (not permanent)
+- **Error handling** — all tools wrapped with actionable error messages, never raw stack traces
 
-## Roadmap
+## Dependencies
 
-- [x] Google Docs — full Markdown read/write
-- [ ] Google Sheets — read/write spreadsheets
-- [ ] Google Slides — create/edit presentations
+| Package | Why |
+|---------|-----|
+| `mcp` | FastMCP framework (stdio transport, tool registration) |
+| `google-api-python-client` | Google Docs/Sheets/Slides/Drive API client |
+| `google-auth-oauthlib` | OAuth 2.0 browser login flow |
+| `google-auth-httplib2` | HTTP transport for Google API |
+| `mistune` | Markdown parser (Docs server only) |
+
+All dependencies install automatically via `uv sync` or `uvx`.
 
 ## Contributing
 
