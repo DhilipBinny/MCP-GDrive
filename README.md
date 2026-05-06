@@ -117,11 +117,23 @@ This opens your browser for Google OAuth. The token saves to `~/.config/google-d
 
 ### Add to Claude Code
 
+**Option 1 — Install from GitHub (no clone needed):**
+
 ```bash
-# Add the servers you need (one, two, or all three)
-claude mcp add google-docs -- uv run --directory /path/to/GDriveMcp google-docs-mcp
-claude mcp add google-sheets -- uv run --directory /path/to/GDriveMcp google-sheets-mcp
-claude mcp add google-slides -- uv run --directory /path/to/GDriveMcp google-slides-mcp
+claude mcp add google-docs -- uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp
+claude mcp add google-sheets -- uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-sheets-mcp
+claude mcp add google-slides -- uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-slides-mcp
+```
+
+**Option 2 — From local clone:**
+
+```bash
+git clone https://github.com/DhilipBinny/MCP-GDrive.git
+cd MCP-GDrive && uv sync
+
+claude mcp add google-docs -- uv run --directory /path/to/MCP-GDrive google-docs-mcp
+claude mcp add google-sheets -- uv run --directory /path/to/MCP-GDrive google-sheets-mcp
+claude mcp add google-slides -- uv run --directory /path/to/MCP-GDrive google-slides-mcp
 ```
 
 Restart Claude Code. The tools are now available.
