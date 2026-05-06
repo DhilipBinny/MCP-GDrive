@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Claude Code local settings
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials — NEVER commit these
+*.pem
+*.key
+token.json
+client_secret.json
+service_account*.json
+credentials.json
+
+# Environment
+.env
+.env.*
