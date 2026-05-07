@@ -1,10 +1,17 @@
 """Authentication for Google Workspace APIs.
 
-Supports two modes (checked in order):
-1. Service Account — set GOOGLE_SERVICE_ACCOUNT_KEY to a JSON key file path
-2. OAuth 2.0 — run `google-docs-mcp auth` once to save a refresh token
+Cross-platform credential storage:
+- Token: OS keyring (macOS Keychain, Windows Credential Locker, Linux libsecret)
+- Fallback: JSON file at platform-correct config path
+- Client secret: file at platform-correct config path
+- Config path: ~/Library/Application Support/ (macOS), %APPDATA% (Windows), ~/.config/ (Linux)
+
+Supports two modes:
+1. Service Account — set GOOGLE_SERVICE_ACCOUNT_KEY env var
+2. OAuth 2.0 — run `google-docs-mcp auth` once
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -22,11 +29,32 @@ SCOPES = [
     "https://www.googleapis.com/auth/presentations",
 ]
 
-CONFIG_DIR = Path.home() / ".config" / "google-docs-mcp"
+APP_NAME = "google-workspace-mcp"
+KEYRING_SERVICE = "google-workspace-mcp"
+KEYRING_USERNAME = "oauth-token"
+
+
+def _get_config_dir() -> Path:
+    """Get platform-correct config directory."""
+    try:
+        from platformdirs import user_config_path
+        return user_config_path(APP_NAME, ensure_exists=True)
+    except ImportError:
+        # Fallback if platformdirs not installed
+        config = Path.home() / ".config" / APP_NAME
+        config.mkdir(parents=True, exist_ok=True)
+        return config
+
+
+CONFIG_DIR = _get_config_dir()
 TOKEN_PATH = CONFIG_DIR / "token.json"
 CLIENT_SECRET_PATH = CONFIG_DIR / "client_secret.json"
 
+LEGACY_CONFIG_DIR = Path.home() / ".config" / "google-docs-mcp"
+LEGACY_TOKEN_PATH = LEGACY_CONFIG_DIR / "token.json"
+
 FALLBACK_CLIENT_SECRETS = [
+    LEGACY_CONFIG_DIR / "client_secret.json",
     Path.home() / ".config" / "gws" / "client_secret.json",
     Path.home() / ".config" / "google" / "credentials.json",
 ]
@@ -35,12 +63,89 @@ _cached_creds = None
 _auth_mode = None
 
 
+def _keyring_available() -> bool:
+    """Check if a real keyring backend is available (not null/plaintext)."""
+    try:
+        import keyring
+        backend = type(keyring.get_keyring()).__name__
+        if "Null" in backend or "Fail" in backend or "PlainText" in backend:
+            return False
+        # On headless Linux, D-Bus may be missing — secretstorage will fail
+        import platform
+        if platform.system() == "Linux":
+            import os
+            if not os.environ.get("DBUS_SESSION_BUS_ADDRESS"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _save_token_to_keyring(creds: Credentials) -> bool:
+    """Try to save token to OS keyring. Returns True on success."""
+    if not _keyring_available():
+        return False
+    try:
+        import keyring
+        keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, creds.to_json())
+        return True
+    except Exception:
+        return False
+
+
+def _load_token_from_keyring() -> Credentials | None:
+    """Try to load token from OS keyring. Returns None if unavailable."""
+    if not _keyring_available():
+        return None
+    try:
+        import keyring
+        token_json = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        if token_json:
+            return Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+    except Exception:
+        pass
+    return None
+
+
+def _save_token_to_file(creds: Credentials) -> None:
+    """Save token to JSON file (fallback when keyring unavailable)."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    TOKEN_PATH.write_text(creds.to_json())
+    try:
+        TOKEN_PATH.chmod(0o600)
+    except OSError:
+        pass  # Windows doesn't support Unix permissions
+
+
+def _load_token_from_file() -> Credentials | None:
+    """Load token from JSON file — checks current and legacy paths."""
+    for path in [TOKEN_PATH, LEGACY_TOKEN_PATH]:
+        if path.exists():
+            try:
+                return Credentials.from_authorized_user_file(str(path), SCOPES)
+            except (ValueError, KeyError):
+                continue
+    return None
+
+
+def _save_token(creds: Credentials) -> None:
+    """Save token — keyring first, file fallback."""
+    if not _save_token_to_keyring(creds):
+        _save_token_to_file(creds)
+
+
+def _load_token() -> Credentials | None:
+    """Load token — keyring first, file fallback."""
+    creds = _load_token_from_keyring()
+    if creds:
+        return creds
+    return _load_token_from_file()
+
+
 def get_credentials():
     """Get valid credentials, trying service account first, then OAuth."""
     global _cached_creds, _auth_mode
 
-    # Service account creds don't report .valid until first use,
-    # so we cache by mode instead of checking .valid
     if _cached_creds is not None:
         if _auth_mode == "service_account":
             return _cached_creds
@@ -84,18 +189,7 @@ def _get_service_account_creds(key_path: str, impersonate: str | None = None):
 
 
 def _get_oauth_creds() -> Credentials:
-    creds = None
-
-    if TOKEN_PATH.exists():
-        try:
-            creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
-        except (ValueError, KeyError):
-            raise RuntimeError(
-                f"Token file is corrupt: {TOKEN_PATH}\n"
-                "Delete it and re-authenticate:\n\n"
-                f"  rm {TOKEN_PATH}\n"
-                "  google-docs-mcp auth"
-            )
+    creds = _load_token()
 
     if creds and creds.valid:
         return creds
@@ -119,7 +213,7 @@ def _get_oauth_creds() -> Credentials:
         "Not authenticated. Run this first:\n\n"
         "  google-docs-mcp auth\n\n"
         "This opens a browser for one-time Google OAuth login.\n"
-        f"Token will be saved to {TOKEN_PATH}"
+        f"Config directory: {CONFIG_DIR}"
     )
 
 
@@ -137,12 +231,6 @@ def _find_client_secret() -> Path:
     )
 
 
-def _save_token(creds: Credentials) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_PATH.write_text(creds.to_json())
-    TOKEN_PATH.chmod(0o600)
-
-
 def run_auth_flow() -> None:
     """Interactive auth flow — opens browser, saves token. Run once."""
     client_secret = _find_client_secret()
@@ -153,6 +241,15 @@ def run_auth_flow() -> None:
     creds = flow.run_local_server(port=0)
     _save_token(creds)
 
+    # Report where the token was saved
+    try:
+        import keyring
+        keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+        location = "OS keyring (secure)"
+    except Exception:
+        location = str(TOKEN_PATH)
+
     print(f"\nAuthenticated successfully!", file=sys.stderr)
-    print(f"Token saved to: {TOKEN_PATH}", file=sys.stderr)
+    print(f"Token saved to: {location}", file=sys.stderr)
+    print(f"Config directory: {CONFIG_DIR}", file=sys.stderr)
     print("You can now use the MCP server with Claude Code.", file=sys.stderr)
