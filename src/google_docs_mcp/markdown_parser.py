@@ -126,6 +126,14 @@ class DocsRequestBuilder:
                 "fields": "namedStyleType",
             }
         })
+        # Explicit text style reset — prevents inheriting heading font/bold
+        self._format_requests.append({
+            "updateTextStyle": {
+                "range": {"startIndex": start, "endIndex": end},
+                "textStyle": {"fontSize": _dim(11), "bold": False},
+                "fields": "fontSize,bold",
+            }
+        })
         self._apply_inline_formats(start, inline_formats)
         self._all_paragraph_ranges.append((start, end))
         self._cursor = end
@@ -167,6 +175,14 @@ class DocsRequestBuilder:
                 }
             })
             self._bullet_ranges.add((item["start"], item["end"]))
+            # Explicit text style reset for list items
+            self._format_requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": item["start"], "endIndex": item["end"]},
+                    "textStyle": {"fontSize": _dim(11), "bold": False},
+                    "fields": "fontSize,bold",
+                }
+            })
             if item["depth"] > 0:
                 self._format_requests.append({
                     "updateParagraphStyle": {
@@ -208,12 +224,14 @@ class DocsRequestBuilder:
                     "updateTextStyle": {
                         "range": {"startIndex": start, "endIndex": end},
                         "textStyle": {
+                            "fontSize": _dim(11),
+                            "bold": False,
                             "foregroundColor": {
                                 "color": {"rgbColor": {"red": 0.4, "green": 0.4, "blue": 0.4}}
                             },
                             "italic": True,
                         },
-                        "fields": "foregroundColor,italic",
+                        "fields": "fontSize,bold,foregroundColor,italic",
                     }
                 })
                 self._apply_inline_formats(start, inline_formats)
@@ -366,17 +384,17 @@ class DocsRequestBuilder:
                         "text": text,
                     }
                 })
-                if r_idx == 0:
-                    self._format_requests.append({
-                        "updateTextStyle": {
-                            "range": {
-                                "startIndex": cell_indices[i],
-                                "endIndex": cell_indices[i] + utf16_len(text),
-                            },
-                            "textStyle": {"bold": True},
-                            "fields": "bold",
-                        }
-                    })
+                # Explicit 11pt reset on all cells to prevent heading inheritance
+                self._format_requests.append({
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": cell_indices[i],
+                            "endIndex": cell_indices[i] + utf16_len(text),
+                        },
+                        "textStyle": {"fontSize": _dim(11), "bold": r_idx == 0},
+                        "fields": "fontSize,bold",
+                    }
+                })
 
         # Cursor after table: start + 1 (newline) + 1 (table structure) +
         # num_rows*(2*num_cols+1) + 1 (trailing para) + total cell text length

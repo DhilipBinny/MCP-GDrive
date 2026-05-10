@@ -1,6 +1,6 @@
 # MCP-GDrive
 
-**Three MCP servers for Google Docs, Sheets, and Slides — 52 tools for Claude Code.**
+**Three MCP servers for Google Docs, Sheets, and Slides — 58 tools for Claude Code.**
 
 [![License](https://img.shields.io/github/license/DhilipBinny/MCP-GDrive)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
@@ -26,7 +26,7 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 
 ## Servers & Tools
 
-### Google Docs — 9 tools + 4 Drive
+### Google Docs — 15 tools + 4 Drive
 
 | Tool | What it does |
 |------|-------------|
@@ -34,11 +34,17 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 | `gdocs_write_markdown` | Write formatted content from Markdown (headings, bold, tables, code blocks, lists) |
 | `gdocs_append_markdown` | Append formatted Markdown to existing doc |
 | `gdocs_read` | Read as text, Markdown, or structural outline |
-| `gdocs_add_table` | Insert formatted table with headers |
-| `gdocs_replace` | Find and replace text |
+| `gdocs_read_section` | Read content from a specific section (by heading text) |
+| `gdocs_insert_at_section` | Insert Markdown content before or after a section |
+| `gdocs_delete_section` | Delete an entire section (heading + content) |
+| `gdocs_add_heading` | Insert heading at a specific position (before/after another heading) |
+| `gdocs_add_table` | Insert formatted table — supports positional insertion (before/after heading) |
+| `gdocs_delete_table_row` | Delete a row from a table |
+| `gdocs_update_table_cell` | Update a specific table cell's content |
+| `gdocs_replace` | Find and replace — scoped: all, first only, or within a section |
 | `gdocs_highlight` | Highlight text in yellow, green, blue, red, orange, or purple |
-| `gdocs_cleanup` | Remove consecutive blank paragraphs |
-| `gdocs_audit` | Report formatting quality — fonts, headings, issues |
+| `gdocs_cleanup` | Fix formatting: blank paragraphs, style inheritance, bold leaks, table fonts |
+| `gdocs_audit` | Report formatting quality — style inheritance, bold leaks, table fonts, headings |
 
 ### Google Sheets — 15 tools + 4 Drive
 
@@ -105,13 +111,15 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 
 ### Authenticate
 
-Place your OAuth client secret at:
+Place your OAuth client secret at the platform-correct config path:
 
-```
-~/.config/google-docs-mcp/client_secret.json
-```
+| OS | Path |
+|----|------|
+| Linux | `~/.config/google-workspace-mcp/client_secret.json` |
+| macOS | `~/Library/Application Support/google-workspace-mcp/client_secret.json` |
+| Windows | `%APPDATA%\google-workspace-mcp\client_secret.json` |
 
-Or the server will look for fallbacks at `~/.config/gws/client_secret.json` and `~/.config/google/credentials.json`.
+Fallback paths also checked: `~/.config/google-docs-mcp/`, `~/.config/gws/`, `~/.config/google/`.
 
 Run the one-time auth flow:
 
@@ -123,7 +131,7 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 uv run google-docs-mcp auth
 ```
 
-This opens your browser. The token saves to `~/.config/google-docs-mcp/token.json` and auto-refreshes silently.
+This opens your browser. The token is saved to your OS keyring (macOS Keychain, Windows Credential Locker, Linux libsecret) with a file fallback, and auto-refreshes silently.
 
 ### Add to Claude Code
 
@@ -167,8 +175,8 @@ src/
     utils.py               Retry, hex colors, A1 notation, sheet helpers
 
   google_docs_mcp/         Docs server
-    server.py              13 MCP tools
-    docs_service.py        Docs API wrapper
+    server.py              19 MCP tools
+    docs_service.py        Docs API wrapper + section boundaries + table ops
     markdown_parser.py     Markdown → Google Docs formatting engine
     formatter.py           Highlight, cleanup, audit
 
@@ -192,6 +200,8 @@ src/
 | `google-auth-oauthlib` | OAuth 2.0 browser login |
 | `google-auth-httplib2` | HTTP transport |
 | `mistune` | Markdown parser (Docs only) |
+| `platformdirs` | OS-correct config paths (macOS/Windows/Linux) |
+| `keyring` | Secure token storage in OS keyring |
 
 All install automatically via `uv sync` or `uvx`.
 
