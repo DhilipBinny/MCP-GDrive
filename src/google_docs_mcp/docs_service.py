@@ -116,6 +116,135 @@ def replace_all_text(document_id: str, find: str, replace: str) -> dict:
     return {"occurrences_replaced": count}
 
 
+def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
+    """Find a section by its heading text.
+
+    Returns dict with: heading_start, heading_end, content_start, content_end, heading_level
+    Or None if heading not found. Supports partial match (e.g. "4.3" matches "4.3 Estimated Cost").
+    """
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    content = body.get("content", [])
+
+    heading_styles = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3,
+                      "HEADING_4": 4, "HEADING_5": 5, "HEADING_6": 6}
+
+    # Find the target heading
+    target_elem = None
+    target_level = None
+    target_idx = None
+
+    for i, elem in enumerate(content):
+        para = elem.get("paragraph")
+        if not para:
+            continue
+        style = para.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
+        if style not in heading_styles:
+            continue
+        text = ""
+        for pe in para.get("elements", []):
+            tr = pe.get("textRun")
+            if tr:
+                text += tr.get("content", "")
+        text = text.strip()
+        if text == heading_text or heading_text in text or text.startswith(heading_text):
+            target_elem = elem
+            target_level = heading_styles[style]
+            target_idx = i
+            break
+
+    if target_elem is None:
+        return None
+
+    heading_start = target_elem.get("startIndex", 0)
+    heading_end = target_elem.get("endIndex", 0)
+    content_start = heading_end
+
+    # Find where section ends: next heading of same or higher level, or end of document
+    content_end = content[-1].get("endIndex", heading_end) if content else heading_end
+    for elem in content[target_idx + 1:]:
+        para = elem.get("paragraph")
+        if not para:
+            continue
+        style = para.get("paragraphStyle", {}).get("namedStyleType", "NORMAL_TEXT")
+        if style in heading_styles and heading_styles[style] <= target_level:
+            content_end = elem.get("startIndex", content_end)
+            break
+
+    return {
+        "heading_start": heading_start,
+        "heading_end": heading_end,
+        "content_start": content_start,
+        "content_end": content_end,
+        "heading_level": target_level,
+    }
+
+
+def find_tables(document_id: str) -> list[dict]:
+    """Return all tables in the document with their indices and content."""
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+
+    tables = []
+    for elem in body.get("content", []):
+        table = elem.get("table")
+        if not table:
+            continue
+        rows_data = []
+        for row in table.get("tableRows", []):
+            cells = []
+            for cell in row.get("tableCells", []):
+                cell_text = ""
+                cell_start = None
+                cell_end = None
+                for ce in cell.get("content", []):
+                    if cell_start is None:
+                        cell_start = ce.get("startIndex", 0)
+                    cell_end = ce.get("endIndex", 0)
+                    cp = ce.get("paragraph")
+                    if cp:
+                        for cpe in cp.get("elements", []):
+                            ctr = cpe.get("textRun")
+                            if ctr:
+                                cell_text += ctr.get("content", "")
+                cells.append({"text": cell_text.strip(), "start": cell_start, "end": cell_end})
+            rows_data.append(cells)
+        tables.append({
+            "start_index": elem.get("startIndex", 0),
+            "end_index": elem.get("endIndex", 0),
+            "rows": len(rows_data),
+            "columns": table.get("columns", 0),
+            "data": rows_data,
+        })
+    return tables
+
+
+def read_section(document_id: str, heading_text: str, as_markdown: bool = False) -> dict | None:
+    """Read content from a specific section only."""
+    boundaries = get_section_boundaries(document_id, heading_text)
+    if not boundaries:
+        return None
+
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    content = body.get("content", [])
+
+    section_elements = []
+    for elem in content:
+        elem_start = elem.get("startIndex", 0)
+        elem_end = elem.get("endIndex", 0)
+        if elem_start >= boundaries["heading_start"] and elem_end <= boundaries["content_end"]:
+            section_elements.append(elem)
+
+    section_body = {"content": section_elements}
+    if as_markdown:
+        return {"content": _body_to_markdown(section_body), "boundaries": boundaries}
+    return {"content": _body_to_text(section_body), "boundaries": boundaries}
+
+
 def _body_to_text(body: dict) -> str:
     parts = []
     for elem in body.get("content", []):
