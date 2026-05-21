@@ -460,6 +460,24 @@ def gslides_duplicate_slide(presentation_id: str, slide_id: str) -> str:
     return f"Duplicated slide `{result['original']}` → `{result['duplicate']}`"
 
 
+@mcp.tool()
+@_handle_errors
+def gslides_get_thumbnail(
+    presentation_id: str,
+    slide_id: str,
+    size: str = "LARGE",
+) -> str:
+    """Get a temporary PNG thumbnail URL for a slide (expires in ~30 minutes).
+
+    Args:
+        presentation_id: The presentation ID
+        slide_id: The slide object ID (from gslides_read)
+        size: LARGE (1600px), MEDIUM (800px), or SMALL (200px)
+    """
+    result = slides_service.get_slide_thumbnail(presentation_id, slide_id, size)
+    return f"Thumbnail ({result['width']}x{result['height']}):\n{result['url']}\n\n(Expires in ~30 minutes)"
+
+
 # ── Google Drive Tools (shared) ────────────────────────────────────
 
 
@@ -526,6 +544,73 @@ def gdrive_delete(file_id: str, confirm: bool = False) -> str:
         return "REFUSED: confirm must be true. Ask the user first."
     result = drive_service.trash_file(file_id)
     return f"Trashed **{result['name']}** (`{result['id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_upload(local_path: str, folder_id: str | None = None, name: str | None = None) -> str:
+    """Upload a local file to Google Drive.
+
+    Args:
+        local_path: Path to the local file
+        folder_id: Optional target folder ID
+        name: Optional name override
+    """
+    result = drive_service.upload_file(local_path, name, folder_id)
+    return f"Uploaded **{result['name']}** (`{result['id']}`)\n- Type: {result['mime_type']}\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_export(
+    file_id: str,
+    format: str = "pdf",
+    output_path: str | None = None,
+) -> str:
+    """Export a Google Workspace file to a local format. Max 10MB.
+
+    Args:
+        file_id: The Google Workspace file ID
+        format: Export format (pdf, docx, xlsx, pptx, csv, txt, png, jpg, svg)
+        output_path: Optional output path
+    """
+    result = drive_service.export_file(file_id, format, output_path)
+    size_kb = result["size"] / 1024
+    return f"Exported to **{result['path']}** ({size_kb:.1f} KB)"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_copy(file_id: str, name: str | None = None, folder_id: str | None = None) -> str:
+    """Copy a file (for template workflows).
+
+    Args:
+        file_id: The file ID to copy
+        name: Optional name for the copy
+        folder_id: Optional folder for the copy
+    """
+    result = drive_service.copy_file(file_id, name, folder_id)
+    return f"Copied to **{result['name']}** (`{result['id']}`)\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_share(
+    file_id: str,
+    email: str | None = None,
+    role: str = "reader",
+    anyone: bool = False,
+) -> str:
+    """Share a file with a user or make it public.
+
+    Args:
+        file_id: The file ID
+        email: Email to share with (omit if anyone=true)
+        role: Permission level (reader, writer, commenter)
+        anyone: Make public (anyone with link)
+    """
+    result = drive_service.share_file(file_id, email, role, anyone)
+    return f"Shared with {result['shared_with']} as {result['role']}\n- URL: {result['url']}"
 
 
 # ── Entry Point ────────────────────────────────────────────────────

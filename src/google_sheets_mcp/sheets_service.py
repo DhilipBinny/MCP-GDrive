@@ -484,3 +484,194 @@ def add_chart(
     )
     chart_id = result["replies"][0]["addChart"]["chart"]["chartId"]
     return {"chart_id": chart_id, "chart_type": chart_type_upper, "title": title or ""}
+
+
+def add_conditional_format(
+    spreadsheet_id: str,
+    range_str: str,
+    rule_type: str,
+    values: list[str] | None = None,
+    bg_color: str | None = None,
+    text_color: str | None = None,
+    bold: bool = False,
+    sheet_name: str | None = None,
+    custom_formula: str | None = None,
+) -> dict:
+    """Add a conditional formatting rule."""
+    service = _get_service()
+    if sheet_name is None and "!" in range_str:
+        sheet_name = range_str.split("!")[0].strip("'")
+    sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+    grid_range = parse_a1_range(range_str, sheet_id)
+
+    rule_type_upper = rule_type.upper()
+    if rule_type_upper == "CUSTOM_FORMULA" and custom_formula:
+        condition = {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": custom_formula}]}
+    else:
+        condition = {"type": rule_type_upper}
+        if values:
+            condition["values"] = [{"userEnteredValue": v} for v in values]
+
+    fmt: dict = {}
+    if bg_color:
+        fmt["backgroundColor"] = hex_to_rgb(bg_color)
+    if text_color or bold:
+        text_fmt: dict = {}
+        if text_color:
+            text_fmt["foregroundColor"] = hex_to_rgb(text_color)
+        if bold:
+            text_fmt["bold"] = True
+        fmt["textFormat"] = text_fmt
+
+    request = {
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [grid_range],
+                "booleanRule": {"condition": condition, "format": fmt},
+            },
+            "index": 0,
+        }
+    }
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [request]},
+        )
+    )
+    return {"rule_type": rule_type_upper, "range": range_str}
+
+
+def set_data_validation(
+    spreadsheet_id: str,
+    range_str: str,
+    rule_type: str,
+    values: list[str] | None = None,
+    strict: bool = True,
+    input_message: str | None = None,
+    sheet_name: str | None = None,
+) -> dict:
+    """Set data validation on a range (dropdown, number range, etc.)."""
+    service = _get_service()
+    if sheet_name is None and "!" in range_str:
+        sheet_name = range_str.split("!")[0].strip("'")
+    sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+    grid_range = parse_a1_range(range_str, sheet_id)
+
+    rule_type_upper = rule_type.upper()
+    condition: dict = {"type": rule_type_upper}
+    if values:
+        condition["values"] = [{"userEnteredValue": v} for v in values]
+
+    rule: dict = {
+        "condition": condition,
+        "strict": strict,
+        "showCustomUi": rule_type_upper in ("ONE_OF_LIST", "ONE_OF_RANGE"),
+    }
+    if input_message:
+        rule["inputMessage"] = input_message
+
+    request = {"setDataValidation": {"range": grid_range, "rule": rule}}
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [request]},
+        )
+    )
+    return {"rule_type": rule_type_upper, "range": range_str}
+
+
+def merge_cells(
+    spreadsheet_id: str,
+    range_str: str,
+    merge_type: str = "MERGE_ALL",
+    sheet_name: str | None = None,
+) -> dict:
+    """Merge cells in a range."""
+    service = _get_service()
+    if sheet_name is None and "!" in range_str:
+        sheet_name = range_str.split("!")[0].strip("'")
+    sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+    grid_range = parse_a1_range(range_str, sheet_id)
+
+    request = {"mergeCells": {"range": grid_range, "mergeType": merge_type.upper()}}
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id, body={"requests": [request]},
+        )
+    )
+    return {"merged_range": range_str, "merge_type": merge_type.upper()}
+
+
+def unmerge_cells(
+    spreadsheet_id: str,
+    range_str: str,
+    sheet_name: str | None = None,
+) -> dict:
+    """Unmerge previously merged cells."""
+    service = _get_service()
+    if sheet_name is None and "!" in range_str:
+        sheet_name = range_str.split("!")[0].strip("'")
+    sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+    grid_range = parse_a1_range(range_str, sheet_id)
+
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [{"unmergeCells": {"range": grid_range}}]},
+        )
+    )
+    return {"unmerged_range": range_str}
+
+
+def add_borders(
+    spreadsheet_id: str,
+    range_str: str,
+    style: str = "SOLID",
+    color: str = "#000000",
+    width: int = 1,
+    edges: str = "all",
+    sheet_name: str | None = None,
+) -> dict:
+    """Add borders to cells. edges: all, outer, top, bottom, left, right, inner_horizontal, inner_vertical."""
+    service = _get_service()
+    if sheet_name is None and "!" in range_str:
+        sheet_name = range_str.split("!")[0].strip("'")
+    sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+    grid_range = parse_a1_range(range_str, sheet_id)
+
+    border = {"style": style.upper(), "color": hex_to_rgb(color), "width": width}
+
+    edge_map = {
+        "all": ["top", "bottom", "left", "right", "innerHorizontal", "innerVertical"],
+        "outer": ["top", "bottom", "left", "right"],
+        "inner": ["innerHorizontal", "innerVertical"],
+    }
+    edge_list = edge_map.get(edges.lower(), [edges.lower()])
+
+    borders_req: dict = {"range": grid_range}
+    for e in edge_list:
+        borders_req[e] = border
+
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [{"updateBorders": borders_req}]},
+        )
+    )
+    return {"bordered_range": range_str, "edges": edges}
+
+
+def duplicate_sheet(spreadsheet_id: str, sheet_name: str, new_name: str | None = None) -> dict:
+    """Duplicate a sheet (tab)."""
+    service = _get_service()
+    sheet_id, title = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+    body: dict = {"sourceSheetId": sheet_id}
+    if new_name:
+        body["newSheetName"] = new_name
+
+    result = execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [{"duplicateSheet": body}]},
+        )
+    )
+    props = result["replies"][0]["duplicateSheet"]["properties"]
+    return {"title": props["title"], "sheet_id": props["sheetId"]}

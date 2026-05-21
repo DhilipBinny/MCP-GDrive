@@ -1,6 +1,6 @@
 # MCP-GDrive
 
-**Three MCP servers for Google Docs, Sheets, and Slides — 58 tools for Claude Code.**
+**Three MCP servers for Google Docs, Sheets, and Slides — 82 tools for Claude Code.**
 
 [![License](https://img.shields.io/github/license/DhilipBinny/MCP-GDrive)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
@@ -10,7 +10,7 @@
 
 ## What it does
 
-Write a Markdown document and it becomes a formatted Google Doc. Create a spreadsheet with charts and formulas. Build a presentation with diagrams from draw.io XML. All through Claude Code.
+Write a Markdown document and it becomes a formatted Google Doc. Create a spreadsheet with charts, conditional formatting, and data validation. Build a presentation with diagrams from draw.io XML. Upload, export, and share files. All through Claude Code.
 
 ## Quick Start
 
@@ -26,7 +26,7 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 
 ## Servers & Tools
 
-### Google Docs — 15 tools + 4 Drive
+### Google Docs — 17 tools
 
 | Tool | What it does |
 |------|-------------|
@@ -37,36 +37,44 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 | `gdocs_read_section` | Read content from a specific section (by heading text) |
 | `gdocs_insert_at_section` | Insert Markdown content before or after a section |
 | `gdocs_delete_section` | Delete an entire section (heading + content) |
-| `gdocs_add_heading` | Insert heading at a specific position (before/after another heading) |
-| `gdocs_add_table` | Insert formatted table — supports positional insertion (before/after heading) |
+| `gdocs_add_heading` | Insert heading at a specific position |
+| `gdocs_add_table` | Insert table — supports positional insertion (before/after heading) |
 | `gdocs_delete_table_row` | Delete a row from a table |
-| `gdocs_update_table_cell` | Update a specific table cell's content |
-| `gdocs_replace` | Find and replace — scoped: all, first only, or within a section |
+| `gdocs_update_table_cell` | Update a specific table cell |
+| `gdocs_insert_image` | Insert inline image from public URL |
+| `gdocs_page_setup` | Set document margins |
+| `gdocs_replace` | Find/replace — scoped: all, first only, or within a section |
 | `gdocs_highlight` | Highlight text in yellow, green, blue, red, orange, or purple |
 | `gdocs_cleanup` | Fix formatting: blank paragraphs, style inheritance, bold leaks, table fonts |
-| `gdocs_audit` | Report formatting quality — style inheritance, bold leaks, table fonts, headings |
+| `gdocs_audit` | Report formatting quality — style inheritance, bold leaks, table fonts |
 
-### Google Sheets — 15 tools + 4 Drive
+### Google Sheets — 21 tools
 
 | Tool | What it does |
 |------|-------------|
 | `gsheets_create` | Create spreadsheet with optional tab names |
 | `gsheets_get_info` | List tabs with row/column counts |
-| `gsheets_read` | Read range as markdown table (formatted, raw, or formula values) |
-| `gsheets_write` | Write data to a range (supports formulas, dates, currency) |
+| `gsheets_read` | Read range as markdown table (formatted, raw, or formula) |
+| `gsheets_write` | Write data to a range (formulas, dates, currency) |
 | `gsheets_append` | Append rows after last data |
 | `gsheets_clear` | Clear values (keeps formatting) |
 | `gsheets_find` | Search text across all cells and sheets |
 | `gsheets_format` | Bold, italic, colors, alignment, number format, font |
 | `gsheets_freeze` | Freeze header rows/columns + auto-resize |
 | `gsheets_sort` | Sort data by column |
+| `gsheets_conditional_format` | Color-code cells by value (>, <, contains, formula) |
+| `gsheets_data_validation` | Dropdowns, number ranges, email validation |
+| `gsheets_merge` | Merge cells (MERGE_ALL, MERGE_COLUMNS, MERGE_ROWS) |
+| `gsheets_unmerge` | Unmerge previously merged cells |
+| `gsheets_borders` | Add cell borders (all, outer, inner, per-side) |
+| `gsheets_duplicate_sheet` | Clone a tab |
 | `gsheets_add_sheet` | Add a tab |
 | `gsheets_delete_sheet` | Delete a tab |
 | `gsheets_rename_sheet` | Rename a tab |
 | `gsheets_add_chart` | Insert chart (COLUMN, BAR, LINE, AREA, SCATTER, PIE, DONUT) |
 | `gsheets_delete_chart` | Delete a chart |
 
-### Google Slides — 16 tools + 4 Drive
+### Google Slides — 17 tools
 
 | Tool | What it does |
 |------|-------------|
@@ -80,21 +88,39 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 | `gslides_add_text_box` | Add positioned text label |
 | `gslides_add_diagram` | Create diagram with auto-positioned nodes and connectors |
 | `gslides_import_drawio` | Import draw.io XML as native editable Slides shapes |
-| `gslides_search_shapes` | Search 58 curated shapes (flowchart, business, tech, symbols) |
+| `gslides_search_shapes` | Search 58 curated shapes (flowchart, business, tech) |
+| `gslides_get_thumbnail` | Get slide as PNG URL (LARGE/MEDIUM/SMALL) |
 | `gslides_replace_text` | Find/replace across all slides (template fill) |
 | `gslides_replace_image` | Replace placeholder shapes with images |
 | `gslides_set_speaker_notes` | Set speaker notes |
 | `gslides_duplicate_slide` | Clone a slide |
 | `gslides_delete_slide` | Delete a slide |
 
-### Google Drive (included in each server) — 4 tools
+### Google Drive (included in each server) — 11 tools
 
 | Tool | What it does |
 |------|-------------|
 | `gdrive_search` | Search files by name or content |
 | `gdrive_list_folder` | List files in a folder |
+| `gdrive_get_info` | File metadata — size, owner, sharing status |
+| `gdrive_create_folder` | Create a new folder |
+| `gdrive_upload` | Upload a local file to Drive |
+| `gdrive_export` | Export as PDF, DOCX, XLSX, PPTX, CSV, TXT, PNG, and more |
+| `gdrive_copy` | Copy a file (template workflows) |
+| `gdrive_share` | Share with a user or make public |
+| `gdrive_rename` | Rename a file or folder |
 | `gdrive_move` | Move file to a different folder |
 | `gdrive_delete` | Trash a file (recoverable 30 days, requires `confirm=true`) |
+
+### Image Workflow (sidecar for private images)
+
+Google APIs require publicly accessible URLs for image insertion. For private/local images:
+
+```
+gdrive_upload → gdrive_share (anyone=true) → gdocs_insert_image / gslides_add_image_slide → gdrive_share (revoke)
+```
+
+Images are stored server-side after insertion — revoking access afterward is safe.
 
 ## Setup
 
@@ -170,25 +196,25 @@ export GOOGLE_IMPERSONATE_USER=user@yourdomain.com  # optional, for Workspace
 ```
 src/
   shared/                  Auth, Drive, utilities (shared by all servers)
-    auth.py                Dual auth: OAuth 2.0 + Service Account
-    drive_service.py       Search, list, move, trash files
+    auth.py                Dual auth: OAuth 2.0 + Service Account, OS keyring
+    drive_service.py       Upload, export, share, copy, search, move, trash
     utils.py               Retry, hex colors, A1 notation, sheet helpers
 
-  google_docs_mcp/         Docs server
-    server.py              19 MCP tools
-    docs_service.py        Docs API wrapper + section boundaries + table ops
+  google_docs_mcp/         Docs server (28 tools)
+    server.py              MCP tool definitions
+    docs_service.py        Docs API — sections, tables, images, margins
     markdown_parser.py     Markdown → Google Docs formatting engine
-    formatter.py           Highlight, cleanup, audit
+    formatter.py           Highlight, cleanup, audit (searches tables too)
 
-  google_sheets_mcp/       Sheets server
-    server.py              19 MCP tools
-    sheets_service.py      Sheets API wrapper (values, formatting, charts)
+  google_sheets_mcp/       Sheets server (29 tools)
+    server.py              MCP tool definitions
+    sheets_service.py      Sheets API — values, formatting, charts, validation
 
-  google_slides_mcp/       Slides server
-    server.py              20 MCP tools
-    slides_service.py      Slides API wrapper
+  google_slides_mcp/       Slides server (25 tools)
+    server.py              MCP tool definitions
+    slides_service.py      Slides API — shapes, connectors, thumbnails
     drawio_converter.py    draw.io XML → Slides shapes (auto-routed connectors)
-    shape_search.py        Curated shape library (58 shapes, 10KB)
+    shape_search.py        Curated shape library (58 shapes)
 ```
 
 ## Dependencies
