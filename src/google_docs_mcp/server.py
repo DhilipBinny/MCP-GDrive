@@ -16,6 +16,25 @@ from . import docs_service, formatter
 from .markdown_parser import markdown_to_requests
 from shared import drive_service
 
+
+def _safe_insert_index(document_id: str, content_end: int) -> int:
+    """Return content_end - 1 unless that points inside a table, in which case return content_end."""
+    candidate = content_end - 1
+    if candidate < 1:
+        return content_end
+    doc = docs_service.read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    for elem in body.get("content", []):
+        table = elem.get("table")
+        if not table:
+            continue
+        t_start = elem.get("startIndex", 0)
+        t_end = elem.get("endIndex", 0)
+        if t_start < candidate < t_end:
+            return content_end
+    return candidate
+
 mcp = FastMCP(
     "google-docs-mcp",
     instructions="""MCP server for Google Docs — create, read, write, and edit formatted documents.
@@ -267,7 +286,7 @@ def gdocs_write(
         if before_heading:
             insert_at = boundaries["heading_start"]
         else:
-            insert_at = boundaries["content_end"] - 1
+            insert_at = _safe_insert_index(document_id, boundaries["content_end"])
         md_requests = markdown_to_requests(markdown, start_index=insert_at)
         docs_service.batch_update(document_id, md_requests, preserve_order=True)
         return f"Inserted content {'before' if before_heading else 'after'} section '{target}'"
@@ -382,7 +401,7 @@ def gdocs_write(
             boundaries = docs_service.get_section_boundaries(document_id, after_heading)
             if not boundaries:
                 return f"ERROR: Heading '{after_heading}' not found"
-            insert_at = boundaries["content_end"] - 1
+            insert_at = _safe_insert_index(document_id, boundaries["content_end"])
         else:
             end_idx = docs_service.get_end_index(document_id)
             insert_at = end_idx - 1 if end_idx > 1 else 1
@@ -426,7 +445,7 @@ def gdocs_write(
             boundaries = docs_service.get_section_boundaries(document_id, after_heading)
             if not boundaries:
                 return f"ERROR: Heading '{after_heading}' not found in document"
-            start = boundaries["content_end"] - 1
+            start = _safe_insert_index(document_id, boundaries["content_end"])
         else:
             end_idx = docs_service.get_end_index(document_id)
             start = end_idx - 1 if end_idx > 1 else 1
@@ -444,7 +463,7 @@ def gdocs_write(
             boundaries = docs_service.get_section_boundaries(document_id, heading)
             if not boundaries:
                 return f"ERROR: Heading '{heading}' not found"
-            index = boundaries["heading_start"] if before_heading else boundaries["content_end"] - 1
+            index = boundaries["heading_start"] if before_heading else _safe_insert_index(document_id, boundaries["content_end"])
         result = docs_service.insert_inline_image(document_id, image_url, index, width_pt, height_pt)
         return f"Inserted image (object: `{result['object_id']}`)"
 
@@ -581,7 +600,9 @@ def gdocs_edit(
 
         old_text = cell["text"]
         if old_text:
-            content_end = cell_start + utf16_len(old_text)
+            # Use raw_text (includes trailing newline) to compute correct range
+            raw_text = cell.get("raw_text", old_text)
+            content_end = cell_start + utf16_len(raw_text.rstrip('\n'))
             requests.append({"deleteContentRange": {"range": {"startIndex": cell_start, "endIndex": content_end}}})
 
         if text:

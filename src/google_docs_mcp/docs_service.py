@@ -38,7 +38,9 @@ def read_document(document_id: str, as_markdown: bool = False) -> dict:
         body = doc.get("body", {})
 
     if as_markdown:
-        text = _body_to_markdown(body)
+        doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
+        lists = doc_tab.get("lists", {})
+        text = _body_to_markdown(body, lists=lists)
     else:
         text = _body_to_text(body)
 
@@ -200,10 +202,12 @@ def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
     heading_styles = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3,
                       "HEADING_4": 4, "HEADING_5": 5, "HEADING_6": 6}
 
-    # Find the target heading
+    # Find the target heading — priority: exact match > startswith > contains
     target_elem = None
     target_level = None
     target_idx = None
+    startswith_match = None
+    contains_match = None
 
     for i, elem in enumerate(content):
         para = elem.get("paragraph")
@@ -218,11 +222,20 @@ def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
             if tr:
                 text += tr.get("content", "")
         text = text.strip()
-        if text == heading_text or heading_text in text or text.startswith(heading_text):
+        if text == heading_text:
             target_elem = elem
             target_level = heading_styles[style]
             target_idx = i
             break
+        if startswith_match is None and text.startswith(heading_text):
+            startswith_match = (elem, heading_styles[style], i)
+        if contains_match is None and heading_text in text:
+            contains_match = (elem, heading_styles[style], i)
+
+    if target_elem is None and startswith_match:
+        target_elem, target_level, target_idx = startswith_match
+    if target_elem is None and contains_match:
+        target_elem, target_level, target_idx = contains_match
 
     if target_elem is None:
         return None
@@ -279,7 +292,7 @@ def find_tables(document_id: str) -> list[dict]:
                             ctr = cpe.get("textRun")
                             if ctr:
                                 cell_text += ctr.get("content", "")
-                cells.append({"text": cell_text.strip(), "start": cell_start, "end": cell_end})
+                cells.append({"text": cell_text.strip(), "raw_text": cell_text, "start": cell_start, "end": cell_end})
             rows_data.append(cells)
         tables.append({
             "start_index": elem.get("startIndex", 0),
@@ -311,7 +324,9 @@ def read_section(document_id: str, heading_text: str, as_markdown: bool = False)
 
     section_body = {"content": section_elements}
     if as_markdown:
-        return {"content": _body_to_markdown(section_body), "boundaries": boundaries}
+        doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
+        lists = doc_tab.get("lists", {})
+        return {"content": _body_to_markdown(section_body, lists=lists), "boundaries": boundaries}
     return {"content": _body_to_text(section_body), "boundaries": boundaries}
 
 
@@ -342,7 +357,7 @@ def _body_to_text(body: dict) -> str:
     return "".join(parts)
 
 
-def _body_to_markdown(body: dict) -> str:
+def _body_to_markdown(body: dict, lists: dict | None = None) -> str:
     parts = []
     for elem in body.get("content", []):
         para = elem.get("paragraph")
@@ -360,27 +375,51 @@ def _body_to_markdown(body: dict) -> str:
             if bullet:
                 nesting = bullet.get("nestingLevel", 0)
                 indent = "  " * nesting
-                prefix = f"{indent}- "
+                list_id = bullet.get("listId", "")
+                is_ordered = False
+                if list_id and lists:
+                    list_props = lists.get(list_id, {})
+                    nesting_levels = list_props.get("listProperties", {}).get("nestingLevels", [])
+                    if nesting_levels and nesting < len(nesting_levels):
+                        glyph_type = nesting_levels[nesting].get("glyphType", "")
+                        if glyph_type and glyph_type != "GLYPH_TYPE_UNSPECIFIED":
+                            is_ordered = True
+                prefix = f"{indent}1. " if is_ordered else f"{indent}- "
 
             line_parts = []
             for pe in para.get("elements", []):
+                if pe.get("inlineObjectElement"):
+                    line_parts.append("[image]")
+                    continue
                 tr = pe.get("textRun")
                 if tr:
                     content = tr.get("content", "")
                     ts = tr.get("textStyle", {})
                     text = content
                     if ts.get("bold"):
-                        text = f"**{text.strip()}**"
+                        stripped = text.strip()
+                        if stripped:
+                            text = text.replace(stripped, f"**{stripped}**", 1)
                     if ts.get("italic"):
-                        text = f"*{text.strip()}*"
+                        stripped = text.strip()
+                        # Strip any ** markers before wrapping with *
+                        inner = stripped.strip("*")
+                        if inner:
+                            text = text.replace(stripped, f"*{stripped}*", 1)
                     if ts.get("strikethrough"):
-                        text = f"~~{text.strip()}~~"
+                        stripped = text.strip()
+                        if stripped:
+                            text = text.replace(stripped, f"~~{stripped}~~", 1)
                     font = ts.get("weightedFontFamily", {}).get("fontFamily", "")
                     if font in ("Courier New", "Consolas", "monospace"):
-                        text = f"`{text.strip()}`"
+                        stripped = text.strip()
+                        if stripped:
+                            text = text.replace(stripped, f"`{stripped}`", 1)
                     link = ts.get("link", {})
                     if link.get("url"):
-                        text = f"[{text.strip()}]({link['url']})"
+                        stripped = text.strip()
+                        if stripped:
+                            text = text.replace(stripped, f"[{stripped}]({link['url']})", 1)
                     line_parts.append(text)
 
             line = "".join(line_parts).rstrip("\n")

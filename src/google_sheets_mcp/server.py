@@ -156,6 +156,8 @@ def gsheets_read(
             return val.replace("|", "\\|")
 
         headers = [_escape(str(h)) for h in values[0]]
+        if all(h.strip() == "" for h in headers):
+            headers = [f"Col{i}" for i in range(len(headers))]
         col_widths = [len(h) for h in headers]
         for row in values[1:]:
             for i, cell in enumerate(row):
@@ -179,7 +181,8 @@ def gsheets_read(
         lines = [f"# {result['title']}\n- ID: `{result['spreadsheet_id']}`\n- URL: {result['url']}\n"]
         for s in result["sheets"]:
             hidden = " (hidden)" if s["hidden"] else ""
-            lines.append(f"- **{s['title']}** — {s['row_count']} rows x {s['column_count']} cols{hidden}")
+            chart_info = f", charts: {s['chart_ids']}" if s.get("chart_ids") else ""
+            lines.append(f"- **{s['title']}** — {s['row_count']} rows x {s['column_count']} cols{hidden}{chart_info}")
         return "\n".join(lines)
 
     elif a == "find":
@@ -279,6 +282,8 @@ def gsheets_format(
     foreground_color: str | None = None,
     background_color: str | None = None,
     horizontal_alignment: Literal["LEFT", "CENTER", "RIGHT"] | None = None,
+    vertical_alignment: Literal["TOP", "MIDDLE", "BOTTOM"] | None = None,
+    wrap_strategy: Literal["OVERFLOW_CELL", "LEGACY_WRAP", "CLIP", "WRAP"] | None = None,
     number_format: str | None = None,
     number_format_pattern: str | None = None,
     style: Literal["SOLID", "SOLID_MEDIUM", "SOLID_THICK", "DASHED", "DOTTED", "DOUBLE"] = "SOLID",
@@ -303,7 +308,7 @@ def gsheets_format(
     - Use action="data_validation" with rule_type="ONE_OF_LIST" for dropdown menus
 
     ACTIONS:
-    - "style" — cell formatting (uses: range, bold, italic, font_size, font_family, foreground_color, background_color, horizontal_alignment, number_format, number_format_pattern)
+    - "style" — cell formatting (uses: range, bold, italic, font_size, font_family, foreground_color, background_color, horizontal_alignment, vertical_alignment, wrap_strategy, number_format, number_format_pattern)
     - "borders" — add borders (uses: range, style, color, edges). Edges: all, outer, inner, top, bottom, left, right
     - "merge" — merge cells (uses: range, merge_type). Types: MERGE_ALL, MERGE_COLUMNS, MERGE_ROWS
     - "unmerge" — unmerge cells (uses: range)
@@ -321,6 +326,8 @@ def gsheets_format(
         foreground_color: Text color hex "#RRGGBB" (style)
         background_color: Cell background hex "#RRGGBB" (style)
         horizontal_alignment: LEFT, CENTER, or RIGHT (style)
+        vertical_alignment: TOP, MIDDLE, or BOTTOM (style)
+        wrap_strategy: OVERFLOW_CELL, LEGACY_WRAP, CLIP, or WRAP (style)
         number_format: Format type — NUMBER, CURRENCY, PERCENT, DATE, TIME, TEXT (style)
         number_format_pattern: Pattern e.g. "$#,##0.00", "yyyy-MM-dd", "0.00%" (style)
         style: Border style (borders)
@@ -345,6 +352,7 @@ def gsheets_format(
             bold=bold, italic=italic, font_size=font_size, font_family=font_family,
             foreground_color=foreground_color, background_color=background_color,
             horizontal_alignment=horizontal_alignment,
+            vertical_alignment=vertical_alignment, wrap_strategy=wrap_strategy,
             number_format_type=number_format, number_format_pattern=number_format_pattern,
         )
         return f"Formatted `{result['formatted_range']}` ({result['fields_applied']} properties applied)"
@@ -413,6 +421,8 @@ def gsheets_manage(
     data_range: str = "",
     chart_id: int = 0,
     auto_resize: bool = True,
+    anchor_row: int = 0,
+    anchor_column: int = 0,
 ) -> str:
     """Manage spreadsheet structure — tabs, freezing, sorting, and charts.
 
@@ -428,13 +438,14 @@ def gsheets_manage(
     - "rename_sheet" — rename a tab (uses: sheet_name, new_name)
     - "duplicate_sheet" — clone a tab (uses: sheet_name, new_name)
     - "freeze" — freeze header rows/columns + auto-resize (uses: sheet_name, rows, columns, auto_resize)
+    - "auto_resize" — auto-fit column widths to content (uses: sheet_name)
     - "sort" — sort data in a range by column (uses: data_range, sort_column, ascending, sheet_name). Exclude header row from data_range.
-    - "add_chart" — insert a chart from data (uses: chart_type, data_range, title, sheet_name)
+    - "add_chart" — insert a chart from data (uses: chart_type, data_range, title, sheet_name, anchor_row, anchor_column)
     - "delete_chart" — remove a chart (uses: chart_id)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        action: Operation — "add_sheet", "delete_sheet", "rename_sheet", "duplicate_sheet", "freeze", "sort", "add_chart", "delete_chart"
+        action: Operation — "add_sheet", "delete_sheet", "rename_sheet", "duplicate_sheet", "freeze", "auto_resize", "sort", "add_chart", "delete_chart"
         title: Name for new tab (add_sheet) or chart title (add_chart)
         sheet_name: Tab name for sheet operations and chart/sort context
         new_name: New name for rename/duplicate
@@ -446,6 +457,8 @@ def gsheets_manage(
         data_range: A1 notation of data for sort or chart (include headers for charts)
         chart_id: Chart ID to delete (delete_chart — find via gsheets_read action="info")
         auto_resize: Auto-fit column widths (freeze, default true)
+        anchor_row: Row index for chart placement (add_chart, default 0)
+        anchor_column: Column index for chart placement (add_chart, default 0)
     """
     a = action.lower()
 
@@ -489,6 +502,10 @@ def gsheets_manage(
             msg += " + auto-resized columns"
         return msg
 
+    elif a == "auto_resize":
+        result = sheets_service.auto_resize_columns(spreadsheet_id, sheet_name)
+        return f"Auto-resized columns on **{result['sheet_name']}**"
+
     elif a == "sort":
         if not data_range:
             return "ERROR: data_range is required for sort action."
@@ -502,7 +519,8 @@ def gsheets_manage(
         if not data_range:
             return "ERROR: data_range is required for add_chart action."
         result = sheets_service.add_chart(
-            spreadsheet_id, chart_type, data_range, title or None, sheet_name
+            spreadsheet_id, chart_type, data_range, title or None, sheet_name,
+            anchor_row=anchor_row, anchor_column=anchor_column,
         )
         return f"Added {result['chart_type']} chart (ID: {result['chart_id']})"
 
@@ -513,7 +531,7 @@ def gsheets_manage(
         return f"Deleted chart {result['deleted_chart_id']}"
 
     else:
-        return f"ERROR: Unknown action '{action}'. Use: add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, sort, add_chart, delete_chart"
+        return f"ERROR: Unknown action '{action}'. Use: add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, auto_resize, sort, add_chart, delete_chart"
 
 
 # ═══════════════════════════════════════════════════════════════
