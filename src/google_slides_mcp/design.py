@@ -40,29 +40,29 @@ FONTS = {
 }
 
 FONT_SIZES = {
-    "slide_title": 34,       # was 38 — research says 28-36 for business
-    "subtitle": 22,
-    "section_title": 44,     # was 46
-    "body": 18,
-    "sub_bullet": 16,
-    "caption": 12,           # was 11 — research minimum
-    "table_header": 18,      # was 14 — research says same as body, bold
-    "table_value": 15,       # was 13 — research says body minus 2-4pt
-    "metric_number": 60,     # was 64
-    "metric_label": 16,
-    "page_number": 10,
-    "source": 10,
-    "quote": 28,
-    "attribution": 16,
-    "author": 14,
-    "code": 13,
+    "slide_title": 26,       # clean, modern — fits long action titles on 1 line
+    "subtitle": 18,
+    "section_title": 36,
+    "body": 16,              # readable but compact
+    "sub_bullet": 14,
+    "caption": 11,
+    "table_header": 14,      # bold, same visual weight as body
+    "table_value": 13,
+    "metric_number": 48,
+    "metric_label": 14,
+    "page_number": 9,
+    "source": 9,
+    "quote": 22,
+    "attribution": 14,
+    "author": 13,
+    "code": 12,
 }
 
 LINE_SPACING = {
-    "title": 110,            # was 115 — research says 100-110 for titles
-    "body": 130,             # was 140 — research sweet spot is 130
-    "bullet": 130,
-    "table": 120,
+    "title": 110,
+    "body": 125,             # tighter — less vertical waste
+    "bullet": 120,
+    "table": 115,
 }
 
 # Content density limits (for LLM guidance in tool descriptions)
@@ -161,9 +161,9 @@ def get_palette(name: str | None = None) -> dict:
 # All positions respect 0.75" side margins, 0.5" top/bottom margins.
 # Title position is IDENTICAL on every content slide (flip test).
 
-_TITLE = {"x": 685_800, "y": 365_760, "w": 8_628_400, "h": 1_143_000}  # 90pt tall — fits 2-line action titles at 34pt
-_BODY_Y = 1_828_800  # after title + accent line + generous gap
-_BODY_H = 3_028_950  # remaining to bottom margin
+_TITLE = {"x": 685_800, "y": 457_200, "w": 8_628_400, "h": 762_000}  # 60pt tall — fits 2-line titles at 26pt
+_BODY_Y = 1_371_600  # title bottom + 152,400 gap (12pt)
+_BODY_H = 3_486_150  # remaining to bottom margin
 
 LAYOUT = {
     "title_slide": {
