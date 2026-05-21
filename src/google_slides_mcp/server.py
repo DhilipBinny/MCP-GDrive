@@ -643,7 +643,7 @@ def gslides_analyze(
 @_handle_errors
 def gslides_import(
     presentation_id: str,
-    format: str,
+    import_format: str,
     content: str,
     title: str = "",
 ) -> str:
@@ -666,18 +666,18 @@ def gslides_import(
 
     Args:
         presentation_id: The presentation ID
-        format: Import format — "markdown" or "drawio"
+        import_format: Import format — "markdown" or "drawio"
         content: The content to import (markdown text or draw.io XML)
         title: Optional title for draw.io import
     """
-    if format.lower() == "markdown":
+    if import_format.lower() == "markdown":
         r = slides_service.from_markdown(presentation_id, content)
         return f"Generated {r['slides_created']} slides from Markdown"
-    elif format.lower() == "drawio":
+    elif import_format.lower() == "drawio":
         r = slides_service.import_drawio(presentation_id, content, title)
         return f"Imported diagram: {r['shapes']} shapes, {r['connectors']} connectors (`{r['slide_id']}`)"
     else:
-        return f"ERROR: Unknown format '{format}'. Use: markdown, drawio"
+        return f"ERROR: Unknown format '{import_format}'. Use: markdown, drawio"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -769,7 +769,7 @@ def gdrive_ops(
     folder_id: str = "",
     local_path: str = "",
     name: str = "",
-    format: str = "pdf",
+    import_format: str = "pdf",
     output_path: str = "",
     email: str = "",
     role: str = "reader",
