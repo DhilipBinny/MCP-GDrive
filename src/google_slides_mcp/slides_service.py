@@ -1047,6 +1047,51 @@ def add_section_slide(
     return {"slide_id": slide_id, "title": title}
 
 
+def add_content_slide(
+    presentation_id: str, title: str, body: str,
+    speaker_notes: str = "", theme: str = "modern",
+) -> dict:
+    """Create a content slide with design-system typography (Montserrat/Open Sans)."""
+    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
+    service = _get_service()
+    pal = get_palette(theme)
+    slide_id = _new_id()
+    L = LAYOUT["content"]
+
+    reqs: list[dict] = [{"createSlide": {
+        "objectId": slide_id,
+        "slideLayoutReference": {"predefinedLayout": "BLANK"},
+    }}]
+    reqs.extend(_set_bg_reqs(slide_id, pal))
+
+    tid = _new_id()
+    reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
+        font=FONTS["heading"], size=FONT_SIZES["slide_title"],
+        color=pal["primary_text"], bold=True, alignment="START"))
+
+    bid = _new_id()
+    reqs.extend(_text_box_reqs(bid, slide_id, body, L["body"],
+        font=FONTS["body"], size=FONT_SIZES["body"],
+        color=pal["primary_text"], alignment="START",
+        line_spacing=140, space_below=6))
+
+    # Auto-bullet if multi-line
+    if "\n" in body:
+        reqs.append({"createParagraphBullets": {
+            "objectId": bid,
+            "textRange": {"type": "ALL"},
+            "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
+        }})
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id, body={"requests": reqs}))
+
+    if speaker_notes:
+        _set_speaker_notes(service, presentation_id, slide_id, speaker_notes)
+
+    return {"slide_id": slide_id, "title": title}
+
+
 def add_two_column_slide(
     presentation_id: str, title: str, col1: str, col2: str,
     col1_title: str = "", col2_title: str = "", theme: str = "modern",
@@ -1188,8 +1233,9 @@ def add_quote_slide(
 
     qid = _new_id()
     display_quote = f"“{quote}”"
+    quote_size = FONT_SIZES["quote"] if len(quote) < 100 else 22 if len(quote) < 150 else 18
     reqs.extend(_text_box_reqs(qid, slide_id, display_quote, L["text"],
-        font=FONTS["body"], size=FONT_SIZES["quote"],
+        font=FONTS["body"], size=quote_size,
         color=pal["primary_text"], italic=True, alignment="START", line_spacing=150))
 
     if attribution:
@@ -1542,6 +1588,79 @@ def ungroup_elements(presentation_id: str, group_ids: list[str]) -> dict:
         body={"requests": [{"ungroupObjects": {"objectIds": group_ids}}]},
     ))
     return {"ungrouped": group_ids}
+
+
+def add_code_slide(
+    presentation_id: str, title: str, code: str,
+    language: str = "", theme: str = "modern",
+) -> dict:
+    """Create a slide with a styled code block (dark background, mono font)."""
+    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
+    from shared.utils import hex_to_rgb
+    service = _get_service()
+    pal = get_palette(theme)
+    slide_id = _new_id()
+    L = LAYOUT["content"]
+
+    reqs: list[dict] = [{"createSlide": {
+        "objectId": slide_id,
+        "slideLayoutReference": {"predefinedLayout": "BLANK"},
+    }}]
+    reqs.extend(_set_bg_reqs(slide_id, pal))
+
+    # Title
+    tid = _new_id()
+    reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
+        font=FONTS["heading"], size=FONT_SIZES["slide_title"],
+        color=pal["primary_text"], bold=True, alignment="START"))
+
+    # Code block background (dark rounded rectangle)
+    code_bg_id = _new_id()
+    code_area = {"x": L["body"]["x"], "y": L["body"]["y"], "w": L["body"]["w"], "h": L["body"]["h"]}
+    reqs.append({"createShape": {
+        "objectId": code_bg_id, "shapeType": "ROUND_RECTANGLE",
+        "elementProperties": {
+            "pageObjectId": slide_id,
+            "size": _emu_size(code_area["w"], code_area["h"]),
+            "transform": _emu_transform(code_area["x"], code_area["y"]),
+        },
+    }})
+    reqs.append({"updateShapeProperties": {
+        "objectId": code_bg_id,
+        "shapeProperties": {
+            "shapeBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb("#1E1E1E")}}},
+            "outline": {"propertyState": "NOT_RENDERED"},
+            "contentAlignment": "TOP",
+        },
+        "fields": "shapeBackgroundFill,outline,contentAlignment",
+    }})
+
+    # Language label (top-right corner, as a separate text box)
+    if language:
+        lang_id = _new_id()
+        lang_pos = {
+            "x": code_area["x"] + code_area["w"] - 900_000,
+            "y": code_area["y"] + 76_200,
+            "w": 800_000, "h": 254_000,
+        }
+        reqs.extend(_text_box_reqs(lang_id, slide_id, language, lang_pos,
+            font=FONTS["mono"], size=9, color="#555555", alignment="END"))
+
+    # Code text box (overlaid on the dark background)
+    code_id = _new_id()
+    code_text_area = {
+        "x": code_area["x"] + 152_400,
+        "y": code_area["y"] + 152_400,
+        "w": code_area["w"] - 304_800,
+        "h": code_area["h"] - 304_800,
+    }
+    reqs.extend(_text_box_reqs(code_id, slide_id, code, code_text_area,
+        font=FONTS["mono"], size=13, color="#D4D4D4",
+        alignment="START", line_spacing=130))
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id, body={"requests": reqs}))
+    return {"slide_id": slide_id, "title": title}
 
 
 def _extract_text(text_elements: list) -> str:
