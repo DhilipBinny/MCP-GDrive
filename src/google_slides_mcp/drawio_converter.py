@@ -257,7 +257,7 @@ def drawio_xml_to_slides_requests(
         fw = (shape_w_in * 72) / (max_line * 0.65) if max_line > 0 else 20
         # Height constraint: font_pt ≈ shape_height / (lines * 1.3)
         fh = (shape_h_in * 72) / (num_lines * 1.3) if num_lines > 0 else 20
-        return max(2, min(int(min(fw, fh)), 11))
+        return max(2, min(int(min(fw, fh)), 14))
 
     requests: list[dict] = []
     node_map: dict[str, str] = {}
@@ -349,6 +349,14 @@ def drawio_xml_to_slides_requests(
                 "updateParagraphStyle": {
                     "objectId": sid, "style": {"alignment": "CENTER"},
                     "textRange": {"type": "ALL"}, "fields": "alignment",
+                }
+            })
+            # TEXT_AUTOFIT must be applied AFTER text insertion (insertText resets it to NONE)
+            requests.append({
+                "updateShapeProperties": {
+                    "objectId": sid,
+                    "shapeProperties": {"autofit": {"autofitType": "TEXT_AUTOFIT"}},
+                    "fields": "autofit",
                 }
             })
 
