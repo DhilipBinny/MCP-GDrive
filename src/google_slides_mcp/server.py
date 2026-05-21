@@ -53,7 +53,13 @@ def _handle_errors(func):
 @mcp.tool()
 @_handle_errors
 def gslides_create(title: str, folder_id: str | None = None) -> str:
-    """Create a new Google Slides presentation.
+    """Create a new blank Google Slides presentation.
+
+    WHEN TO USE: For new decks without a specific brand/theme.
+    FOR BRANDED DECKS: Use gslides_manage(action="create_from_template") instead —
+    it copies an existing template preserving theme, logos, and layouts.
+
+    WORKFLOW: create → set_theme → add slides.
 
     Args:
         title: Presentation title
@@ -73,7 +79,12 @@ def gslides_create(title: str, folder_id: str | None = None) -> str:
 @mcp.tool()
 @_handle_errors
 def gslides_read(presentation_id: str) -> str:
-    """Read all slides — titles, text, tables, images, element IDs.
+    """Read all slides — titles, text, tables, images, and element object IDs.
+
+    USE THE OUTPUT FOR: Finding element IDs needed by gslides_edit and gslides_manage.
+    Element IDs appear as `backtick-quoted` strings next to each element.
+
+    WORKFLOW: read → identify element IDs → edit/manage.
 
     Args:
         presentation_id: The presentation ID
@@ -141,22 +152,30 @@ def gslides_add_slide(
 ) -> str:
     """Add a slide to a presentation. The `type` parameter selects the layout.
 
+    GUIDELINES FOR BEST RESULTS:
+    - Use gslides_analyze(content_type=...) FIRST to get recommended font sizes for your audience
+    - One idea per slide. If you have two ideas, make two slides.
+    - Titles should be TAKEAWAYS ("Revenue grew 23%") not TOPICS ("Revenue Analysis")
+    - Max 6 bullets, max 8 words per bullet, max 40 words per slide body
+    - For visual diagrams (flows, architectures), use gslides_import(format="drawio") instead
+    - For branded decks, use type="from_layout" with template layout IDs
+
     TYPES:
     - "title" — title slide (uses: title, subtitle, author)
     - "section" — section divider with accent background (uses: title, section_number)
     - "content" — bullet list slide (uses: title, body). Multi-line body → auto-bullets
-    - "two_column" — two columns (uses: title, col1, col2, col1_title, col2_title)
-    - "table" — styled table (uses: title, headers, rows)
-    - "metrics" — big numbers (uses: title, metrics=[{"value": "98%", "label": "Uptime"}])
-    - "quote" — quote with accent bar (uses: quote, attribution)
-    - "code" — code block on dark bg (uses: title, code, language)
+    - "two_column" — comparison layout (uses: title, col1, col2, col1_title, col2_title)
+    - "table" — styled table with colored header (uses: title, headers, rows). Max 8 rows, 6 cols.
+    - "metrics" — 2-4 big numbers (uses: title, metrics=[{"value": "98%", "label": "Uptime"}])
+    - "quote" — quote with accent bar (uses: quote, attribution). Don't add quotation marks — added auto.
+    - "code" — dark background code block (uses: title, code, language)
     - "image_text" — image + text side by side (uses: title, image_url, body, image_side)
-    - "chart" — embedded Sheets chart (uses: title, spreadsheet_id, chart_id)
-    - "image" — image slide (uses: title, image_url)
-    - "blank" — blank slide with optional title (uses: title)
-    - "from_layout" — use a template layout by ID (uses: layout_id, texts={"TITLE_0": "...", "BODY_0": "..."})
+    - "chart" — live Sheets chart embed (uses: title, spreadsheet_id, chart_id)
+    - "image" — image slide (uses: title, image_url). Image must be publicly accessible URL.
+    - "blank" — empty slide (uses: title)
+    - "from_layout" — template layout (uses: layout_id, texts={"TITLE_0": "...", "BODY_0": "..."})
 
-    All styling params are OPTIONAL — defaults from theme. Override to customize.
+    All styling params are OPTIONAL — defaults from theme. Override any to customize.
 
     Args:
         presentation_id: The presentation ID
@@ -274,6 +293,15 @@ def gslides_edit(
 ) -> str:
     """Edit existing elements in a presentation.
 
+    WORKFLOW: Always run gslides_analyze FIRST to understand what needs fixing.
+    Then use gslides_read to get element IDs. Then apply edits.
+
+    GUIDELINES:
+    - For font consistency: use "normalize_fonts" to replace off-brand fonts in one call
+    - For full brand enforcement: use "brand_kit" — it normalizes fonts AND styles unstyled tables
+    - For individual element fixes: use "text_style" or "shape_fill" with specific element_id
+    - Match the deck's existing accent color when styling tables (find it via gslides_analyze)
+
     ACTIONS:
     - "text_style" — change font/size/color on element (uses: element_id, font_family, font_size, bold, italic, color)
     - "shape_fill" — change fill/outline on shape (uses: element_id, fill_color, outline_color, outline_weight)
@@ -377,6 +405,15 @@ def gslides_manage(
     placeholder_text: str = "",
 ) -> str:
     """Structural operations on a presentation.
+
+    TEMPLATE WORKFLOW (for branded decks):
+    1. action="create_from_template" with template file ID → copies deck, lists layouts
+    2. action="list_layouts" → see available layouts with placeholder types
+    3. Use gslides_add_slide(type="from_layout", layout_id=..., texts={...}) to add themed slides
+
+    BATCH REPLACE WORKFLOW (for template filling):
+    1. Create slides with {{placeholders}} in text
+    2. action="batch_replace" with replacements={"{{name}}": "John", "{{date}}": "2025-01-15"}
 
     ACTIONS:
     - "delete_slide" — delete a slide (uses: slide_id)
@@ -512,13 +549,18 @@ def gslides_analyze(
 ) -> str:
     """Analyze a presentation's style OR get recommendations for new slides.
 
+    ALWAYS CALL THIS BEFORE EDITING. It tells you what's wrong so you make
+    informed decisions instead of guessing.
+
     MODE 1 — Audit (provide presentation_id):
     Returns fonts, sizes, colors used, unstyled tables, issues found.
     Use before gslides_edit to understand what needs fixing.
+    Look for: too many fonts (keep ≤2), unstyled tables, tiny text (<9pt).
 
     MODE 2 — Recommend (provide content_type):
     Returns suggested font sizes, colors, spacing for a slide type.
     Use before gslides_add_slide to get the right styling values.
+    Adjusts recommendations based on audience (keynote=larger, technical=smaller).
 
     Args:
         presentation_id: Presentation to audit (mode 1)
@@ -578,6 +620,17 @@ def gslides_import(
     title: str = "",
 ) -> str:
     """Import content into a presentation.
+
+    WHEN TO USE WHICH FORMAT:
+    - "markdown" — for text-heavy content (lectures, reports). Fast bulk slide generation.
+    - "drawio" — for visual diagrams (architectures, flows, comparisons). Generates native
+      editable shapes with auto-scaling and connector routing.
+
+    DRAW.IO TIPS:
+    - Canvas: 1000x562 px (16:9). Grid: x=col*160+40, y=row*100+40.
+    - Use gslides_search_shapes to find exact draw.io style strings.
+    - Connectors auto-route via RerouteLineRequest — no manual positioning needed.
+    - Use pastel fills (fillColor=#dbeafe) with matching strokes (strokeColor=#6c8ebf).
 
     FORMATS:
     - "markdown" — # title, ## section, ### content, ``` code, > quote, | table
@@ -677,6 +730,12 @@ def gdrive_ops(
     confirm: bool = False,
 ) -> str:
     """Google Drive file operations.
+
+    IMAGE SIDECAR (for inserting private/local images into slides):
+    1. action="upload" local image → get file_id
+    2. action="share" with anyone=true → get public URL
+    3. Use the URL in gslides_add_slide(type="image", image_url=...)
+    4. action="share" to revoke (image persists in slide after insertion)
 
     ACTIONS:
     - "move" — move file (uses: file_id, folder_id)
