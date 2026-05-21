@@ -434,6 +434,8 @@ def gslides_manage(
     footer: str = "",
     image_url: str = "",
     placeholder_text: str = "",
+    name: str = "",
+    folder_id: str = "",
 ) -> str:
     """Structural operations on a presentation.
 
@@ -884,7 +886,7 @@ def gdrive_ops(
         r = drive_service.upload_file(local_path, name or None, folder_id or None)
         return f"Uploaded **{r['name']}** (`{r['id']}`)"
     elif a == "export":
-        r = drive_service.export_file(file_id, format, output_path or None)
+        r = drive_service.export_file(file_id, import_format, output_path or None)
         return f"Exported → **{r['path']}** ({r['size']/1024:.1f} KB)"
     elif a == "share":
         r = drive_service.share_file(file_id, email or None, role, anyone)
