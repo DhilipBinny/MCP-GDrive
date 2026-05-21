@@ -579,19 +579,26 @@ def gslides_add_content_slide(
     title: str,
     body: str,
     speaker_notes: str = "",
-    theme: str = "modern",
+    theme: str | None = None,
 ) -> str:
     """Add a content slide with professional typography (Montserrat title, Open Sans body).
 
     Multi-line body automatically becomes a bullet list. Uses the design system
     with proper font sizes, spacing, and colors.
 
+    CONTENT RULES (McKinsey/BCG standard):
+    - Title should be the TAKEAWAY, not a topic label ("Revenue grew 15%" not "Revenue Analysis")
+    - Maximum 6 bullet points per slide
+    - Maximum 8 words per bullet
+    - Maximum 40 words total on the slide body
+    - One idea per slide — if you have two ideas, make two slides
+
     Args:
         presentation_id: The presentation ID
-        title: Slide title
+        title: Slide title (should state the key takeaway, not just a topic)
         body: Body text (each line becomes a bullet if multi-line)
         speaker_notes: Optional speaker notes
-        theme: Color theme — modern, corporate, dark, warm
+        theme: Color theme (uses deck theme if set via gslides_set_theme)
     """
     result = slides_service.add_content_slide(presentation_id, title, body, speaker_notes, theme)
     return f"Added content slide: **{result['title']}** (`{result['slide_id']}`)"
