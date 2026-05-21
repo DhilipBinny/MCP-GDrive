@@ -18,7 +18,35 @@ from shared import drive_service
 
 mcp = FastMCP(
     "google-slides-mcp",
-    instructions="MCP server for Google Slides — create, read, edit, and manage presentations with 8 consolidated tools",
+    instructions="""MCP server for Google Slides — create, read, edit, and manage presentations.
+
+WORKFLOW FOR BUILDING A DECK:
+1. gslides_analyze(content_type=...) FIRST — get font sizes tuned for audience
+2. gslides_create or gslides_manage(action="create_from_template") for branded decks
+3. gslides_manage(action="set_theme") to set color palette BEFORE adding slides
+4. gslides_add_slide — one idea per slide, takeaway titles
+5. For visual diagrams: gslides_import(format="drawio") — NOT add_slide
+6. gslides_analyze(presentation_id=...) to audit — fix issues found
+7. gslides_manage(action="add_page_numbers") last
+
+WORKFLOW FOR EDITING EXISTING DECKS:
+1. gslides_analyze(presentation_id=...) — see what's wrong
+2. gslides_read — get element IDs
+3. gslides_edit — apply fixes (text_style, normalize_fonts, brand_kit, table_style)
+
+DESIGN RULES (always follow):
+- ONE idea per slide. Two ideas = two slides.
+- Titles are TAKEAWAYS ("Revenue grew 23%") not TOPICS ("Revenue Analysis").
+- Max 6 bullets, 8 words/bullet, 40 words/slide body.
+- Max 2 font families per deck. Third only for code blocks.
+- 60/30/10 color ratio: 60% background, 30% secondary, 10% accent. ONE accent color.
+- Light bg: text #202124 or darker. Dark bg: text #F5F5F7 or lighter.
+- Table: max 8 rows, 6 cols. Header uses deck accent color.
+- At least 40% whitespace per slide. If it looks full, split it.
+- NEVER below 12pt for visible text. 9pt only for page numbers.
+- If user doesn't specify colors, inherit from deck theme. Don't invent new colors.
+- For visual diagrams (flows, architectures), use draw.io XML import — NOT shapes.
+""",
 )
 
 
