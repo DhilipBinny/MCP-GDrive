@@ -70,25 +70,58 @@ def _resolve_theme(presentation_id: str, theme: str | None) -> str:
     return _deck_themes.get(presentation_id, DEFAULT_PALETTE)
 
 
-def _title_accent_reqs(slide_id: str, pal: dict) -> list[dict]:
+def _header_bar_reqs(slide_id: str, pal: dict) -> list[dict]:
+    """Full-width colored header bar behind the title (McKinsey pattern)."""
     from .design import LAYOUT
     from shared.utils import hex_to_rgb
-    L = LAYOUT["title_accent"]
+    L = LAYOUT["header_bar"]
+    bid = _new_id()
+    return [
+        {"createShape": {
+            "objectId": bid, "shapeType": "RECTANGLE",
+            "elementProperties": {
+                "pageObjectId": slide_id,
+                "size": _emu_size(L["w"], L["h"]),
+                "transform": _emu_transform(L["x"], L["y"]),
+            },
+        }},
+        {"updateShapeProperties": {
+            "objectId": bid,
+            "shapeProperties": {
+                "shapeBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["accent"])}, "alpha": 1.0}},
+                "outline": {"propertyState": "NOT_RENDERED"},
+            },
+            "fields": "shapeBackgroundFill,outline",
+        }},
+        {"updatePageElementsZOrder": {
+            "pageElementObjectIds": [bid],
+            "operation": "SEND_TO_BACK",
+        }},
+    ]
+
+
+def _footer_line_reqs(slide_id: str, pal: dict) -> list[dict]:
+    """Thin horizontal divider line above the footer area."""
+    from .design import LAYOUT
+    from shared.utils import hex_to_rgb
     lid = _new_id()
+    x = LAYOUT["content"]["title"]["x"]
+    w = LAYOUT["content"]["title"]["w"]
+    y = LAYOUT["footer_line_y"]
     return [
         {"createLine": {
             "objectId": lid, "category": "STRAIGHT",
             "elementProperties": {
                 "pageObjectId": slide_id,
-                "size": _emu_size(L["w"], 0),
-                "transform": _emu_transform(L["x"], L["y"]),
+                "size": _emu_size(w, 0),
+                "transform": _emu_transform(x, y),
             },
         }},
         {"updateLineProperties": {
             "objectId": lid,
             "lineProperties": {
-                "lineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["accent"])}}},
-                "weight": {"magnitude": L["weight"], "unit": "PT"},
+                "lineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["divider"])}}},
+                "weight": {"magnitude": 0.75, "unit": "PT"},
             },
             "fields": "lineFill,weight",
         }},
@@ -122,8 +155,9 @@ def _get_slide_count(service, presentation_id: str) -> int:
 
 
 def _polish_reqs(slide_id: str, pal: dict, presentation_id: str, service) -> list[dict]:
-    """Add page number + footer to a content slide."""
+    """Add footer line + page number + footer text to a content slide."""
     reqs = []
+    reqs.extend(_footer_line_reqs(slide_id, pal))
     slide_num = _get_slide_count(service, presentation_id) + 1
     reqs.extend(_page_number_reqs(slide_id, pal, slide_num))
     reqs.extend(_footer_reqs(slide_id, pal, presentation_id))
@@ -146,6 +180,94 @@ def create_presentation(title: str) -> dict:
         "title": pres["title"],
         "slides": [_summarize_slide(s) for s in pres.get("slides", [])],
     }
+
+
+def list_layouts(presentation_id: str) -> list[dict]:
+    """List all available layouts in a presentation (from its master)."""
+    service = _get_service()
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+    layouts = []
+    for layout in pres.get("layouts", []):
+        props = layout.get("layoutProperties", {})
+        placeholders = []
+        for elem in layout.get("pageElements", []):
+            ph = elem.get("shape", {}).get("placeholder", {})
+            if ph:
+                placeholders.append({"type": ph.get("type", ""), "index": ph.get("index", 0)})
+        layouts.append({
+            "layout_id": layout["objectId"],
+            "name": props.get("displayName", props.get("name", "")),
+            "placeholders": placeholders,
+        })
+    return layouts
+
+
+def create_from_template(
+    template_id: str, title: str, folder_id: str | None = None,
+) -> dict:
+    """Copy a template presentation, clear its content, return a clean deck with the theme."""
+    from shared import drive_service
+    result = drive_service.copy_file(template_id, title, folder_id)
+    new_id = result["id"]
+
+    # Delete all slides except the first (to keep at least one for layout reference)
+    pres = get_presentation(new_id)
+    for s in pres["slides"][1:]:
+        delete_slide(new_id, s["slide_id"])
+    # Delete the last remaining slide
+    if pres["slides"]:
+        delete_slide(new_id, pres["slides"][0]["slide_id"])
+
+    return {
+        "presentation_id": new_id,
+        "title": title,
+        "url": result.get("url", ""),
+        "layouts": list_layouts(new_id),
+    }
+
+
+def add_slide_from_layout(
+    presentation_id: str, layout_id: str, texts: dict[str, str] | None = None,
+) -> dict:
+    """Create a slide using a specific layout ID, then fill placeholders.
+
+    texts: dict mapping "PLACEHOLDER_TYPE_INDEX" to text content.
+    E.g. {"TITLE_0": "My Title", "BODY_0": "Body text", "SUBTITLE_0": "Sub"}
+    """
+    service = _get_service()
+    slide_id = _new_id()
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"createSlide": {
+            "objectId": slide_id,
+            "slideLayoutReference": {"layoutId": layout_id},
+        }}]},
+    ))
+
+    if texts:
+        # Read back to find placeholder object IDs
+        pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+        slide = next((s for s in pres["slides"] if s["objectId"] == slide_id), None)
+        if slide:
+            insert_reqs = []
+            for elem in slide.get("pageElements", []):
+                ph = elem.get("shape", {}).get("placeholder", {})
+                if not ph:
+                    continue
+                key = f"{ph.get('type', '')}_{ph.get('index', 0)}"
+                if key in texts:
+                    insert_reqs.append({"insertText": {
+                        "objectId": elem["objectId"],
+                        "text": texts[key],
+                    }})
+            if insert_reqs:
+                execute_with_retry(service.presentations().batchUpdate(
+                    presentationId=presentation_id,
+                    body={"requests": insert_reqs},
+                ))
+
+    return {"slide_id": slide_id}
 
 
 def get_presentation(presentation_id: str) -> dict:
@@ -1034,9 +1156,14 @@ def _set_bg_reqs(slide_id: str, pal: dict) -> list[dict]:
 def add_title_slide(
     presentation_id: str, title: str, subtitle: str = "",
     author: str = "", theme: str | None = None,
+    title_font: str | None = None, title_size: float | None = None,
+    subtitle_font: str | None = None, subtitle_size: float | None = None,
+    title_color: str | None = None, subtitle_color: str | None = None,
+    bg_color: str | None = None,
 ) -> dict:
-    """Create a professional title slide."""
+    """Create a title slide. All styling optional — defaults from theme."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
+    from shared.utils import hex_to_rgb
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1046,18 +1173,29 @@ def add_title_slide(
         "objectId": slide_id,
         "slideLayoutReference": {"predefinedLayout": "BLANK"},
     }}]
-    reqs.extend(_set_bg_reqs(slide_id, pal))
+    if bg_color:
+        reqs.append({"updatePageProperties": {
+            "objectId": slide_id,
+            "pageProperties": {"pageBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(bg_color)}}}},
+            "fields": "pageBackgroundFill",
+        }})
+    else:
+        reqs.extend(_set_bg_reqs(slide_id, pal))
 
     tid = _new_id()
     reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
-        font=FONTS["heading"], size=FONT_SIZES["slide_title"],
-        color=pal["primary_text"], bold=True, alignment="CENTER", line_spacing=115))
+        font=title_font or FONTS["heading"],
+        size=title_size or FONT_SIZES["slide_title"],
+        color=title_color or pal["primary_text"],
+        bold=True, alignment="CENTER", line_spacing=115))
 
     if subtitle:
         sid = _new_id()
         reqs.extend(_text_box_reqs(sid, slide_id, subtitle, L["subtitle"],
-            font=FONTS["body"], size=FONT_SIZES["subtitle"],
-            color=pal["secondary_text"], alignment="CENTER"))
+            font=subtitle_font or FONTS["body"],
+            size=subtitle_size or FONT_SIZES["subtitle"],
+            color=subtitle_color or pal["secondary_text"],
+            alignment="CENTER"))
 
     if author:
         aid = _new_id()
@@ -1104,7 +1242,7 @@ def add_section_slide(
     tid = _new_id()
     reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
         font=FONTS["heading"], size=FONT_SIZES["section_title"],
-        color="#FFFFFF", bold=True, alignment="START", line_spacing=115))
+        color=pal["primary_text"], bold=True, alignment="START", line_spacing=115))
 
     # Accent underline
     lid = _new_id()
@@ -1133,9 +1271,14 @@ def add_section_slide(
 def add_content_slide(
     presentation_id: str, title: str, body: str,
     speaker_notes: str = "", theme: str | None = None,
+    title_font: str | None = None, title_size: float | None = None,
+    body_font: str | None = None, body_size: float | None = None,
+    title_color: str | None = None, body_color: str | None = None,
+    line_spacing: float | None = None, bg_color: str | None = None,
 ) -> dict:
-    """Create a content slide with design-system typography (Montserrat/Open Sans)."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
+    """Create a content slide. All styling is optional — defaults from theme."""
+    from .design import LAYOUT, FONTS, FONT_SIZES, LINE_SPACING, get_palette
+    from shared.utils import hex_to_rgb
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1145,21 +1288,35 @@ def add_content_slide(
         "objectId": slide_id,
         "slideLayoutReference": {"predefinedLayout": "BLANK"},
     }}]
-    reqs.extend(_set_bg_reqs(slide_id, pal))
+    if bg_color:
+        reqs.append({"updatePageProperties": {
+            "objectId": slide_id,
+            "pageProperties": {"pageBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(bg_color)}}}},
+            "fields": "pageBackgroundFill",
+        }})
+    else:
+        reqs.extend(_set_bg_reqs(slide_id, pal))
 
     tid = _new_id()
     reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
-        font=FONTS["heading"], size=FONT_SIZES["slide_title"],
-        color=pal["primary_text"], bold=True, alignment="START"))
+        font=title_font or FONTS["heading"],
+        size=title_size or FONT_SIZES["slide_title"],
+        color=title_color or pal["primary_text"],
+        bold=True, alignment="START"))
 
-    bid = _new_id()
-    reqs.extend(_text_box_reqs(bid, slide_id, body, L["body"],
-        font=FONTS["body"], size=FONT_SIZES["body"],
-        color=pal["primary_text"], alignment="START",
-        line_spacing=140, space_below=6))
+    if body:
+        bid = _new_id()
+        reqs.extend(_text_box_reqs(bid, slide_id, body, L["body"],
+            font=body_font or FONTS["body"],
+            size=body_size or FONT_SIZES["body"],
+            color=body_color or pal["primary_text"],
+            alignment="START",
+            line_spacing=line_spacing or LINE_SPACING["body"],
+            space_below=6))
+    else:
+        bid = None
 
-    # Auto-bullet if multi-line
-    if "\n" in body:
+    if bid and "\n" in body:
         reqs.append({"createParagraphBullets": {
             "objectId": bid,
             "textRange": {"type": "ALL"},
@@ -1782,6 +1939,287 @@ def update_table_columns(
     return {"table_id": table_id, "columns": len(column_widths)}
 
 
+def update_text_style(
+    presentation_id: str,
+    element_id: str,
+    font_family: str | None = None,
+    font_size: float | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    color: str | None = None,
+    start_index: int | None = None,
+    end_index: int | None = None,
+) -> dict:
+    """Update text style on an existing element (shape, text box, table cell)."""
+    from shared.utils import hex_to_rgb
+    service = _get_service()
+    style: dict = {}
+    fields = []
+
+    if font_family:
+        style["fontFamily"] = font_family
+        fields.append("fontFamily")
+    if font_size is not None:
+        style["fontSize"] = {"magnitude": font_size, "unit": "PT"}
+        fields.append("fontSize")
+    if bold is not None:
+        style["bold"] = bold
+        fields.append("bold")
+    if italic is not None:
+        style["italic"] = italic
+        fields.append("italic")
+    if color:
+        style["foregroundColor"] = {"opaqueColor": {"rgbColor": hex_to_rgb(color)}}
+        fields.append("foregroundColor")
+
+    if not fields:
+        return {"element_id": element_id, "updated": False}
+
+    text_range = {"type": "ALL"}
+    if start_index is not None and end_index is not None:
+        text_range = {"type": "FIXED_RANGE", "startIndex": start_index, "endIndex": end_index}
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"updateTextStyle": {
+            "objectId": element_id,
+            "style": style,
+            "textRange": text_range,
+            "fields": ",".join(fields),
+        }}]},
+    ))
+    return {"element_id": element_id, "updated": True, "fields": fields}
+
+
+def style_existing_table(
+    presentation_id: str,
+    table_id: str,
+    header_bg: str | None = None,
+    header_text_color: str = "#FFFFFF",
+    alt_row_color: str | None = None,
+    border_color: str | None = None,
+    header_font_size: float | None = None,
+    cell_font_size: float | None = None,
+    font_family: str | None = None,
+) -> dict:
+    """Apply professional styling to an existing table."""
+    from shared.utils import hex_to_rgb
+    service = _get_service()
+
+    # Read the table to get dimensions
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+    table_data = None
+    for slide in pres.get("slides", []):
+        for elem in slide.get("pageElements", []):
+            if elem["objectId"] == table_id and "table" in elem:
+                table_data = elem["table"]
+                break
+        if table_data:
+            break
+    if not table_data:
+        raise ValueError(f"Table {table_id} not found")
+
+    num_rows = table_data.get("rows", 0)
+    num_cols = table_data.get("columns", 0)
+    reqs = []
+
+    # Header row background
+    if header_bg:
+        for c in range(num_cols):
+            reqs.append({"updateTableCellProperties": {
+                "objectId": table_id,
+                "tableRange": {"location": {"rowIndex": 0, "columnIndex": c}, "rowSpan": 1, "columnSpan": 1},
+                "tableCellProperties": {
+                    "tableCellBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(header_bg)}}},
+                },
+                "fields": "tableCellBackgroundFill",
+            }})
+            # Header text color + bold
+            reqs.append({"updateTextStyle": {
+                "objectId": table_id,
+                "cellLocation": {"rowIndex": 0, "columnIndex": c},
+                "style": {
+                    "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(header_text_color)}},
+                    "bold": True,
+                    **({"fontFamily": font_family} if font_family else {}),
+                    **({"fontSize": {"magnitude": header_font_size, "unit": "PT"}} if header_font_size else {}),
+                },
+                "textRange": {"type": "ALL"},
+                "fields": "foregroundColor,bold" + (",fontFamily" if font_family else "") + (",fontSize" if header_font_size else ""),
+            }})
+
+    # Alternating row backgrounds
+    if alt_row_color:
+        for r in range(1, num_rows):
+            if r % 2 == 0:
+                for c in range(num_cols):
+                    reqs.append({"updateTableCellProperties": {
+                        "objectId": table_id,
+                        "tableRange": {"location": {"rowIndex": r, "columnIndex": c}, "rowSpan": 1, "columnSpan": 1},
+                        "tableCellProperties": {
+                            "tableCellBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(alt_row_color)}}},
+                        },
+                        "fields": "tableCellBackgroundFill",
+                    }})
+
+    # Cell text styling
+    if cell_font_size or font_family:
+        for r in range(1, num_rows):
+            for c in range(num_cols):
+                style: dict = {}
+                flds = []
+                if font_family:
+                    style["fontFamily"] = font_family
+                    flds.append("fontFamily")
+                if cell_font_size:
+                    style["fontSize"] = {"magnitude": cell_font_size, "unit": "PT"}
+                    flds.append("fontSize")
+                if flds:
+                    reqs.append({"updateTextStyle": {
+                        "objectId": table_id,
+                        "cellLocation": {"rowIndex": r, "columnIndex": c},
+                        "style": style,
+                        "textRange": {"type": "ALL"},
+                        "fields": ",".join(flds),
+                    }})
+
+    # Borders
+    if border_color:
+        reqs.append({"updateTableBorderProperties": {
+            "objectId": table_id,
+            "borderPosition": "INNER_HORIZONTAL",
+            "tableBorderProperties": {
+                "tableBorderFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(border_color)}}},
+                "weight": {"magnitude": 0.5, "unit": "PT"},
+                "dashStyle": "SOLID",
+            },
+            "fields": "tableBorderFill,weight,dashStyle",
+        }})
+
+    if reqs:
+        execute_with_retry(service.presentations().batchUpdate(
+            presentationId=presentation_id, body={"requests": reqs}))
+
+    return {"table_id": table_id, "rows": num_rows, "cols": num_cols, "requests": len(reqs)}
+
+
+def normalize_fonts(
+    presentation_id: str,
+    target_font: str = "Open Sans",
+    replace_fonts: list[str] | None = None,
+) -> dict:
+    """Replace all instances of specified fonts with a target font across the entire deck."""
+    service = _get_service()
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+    replace_fonts = replace_fonts or ["Segoe UI", "Calibri", "Times New Roman"]
+
+    reqs = []
+    count = 0
+    for slide in pres.get("slides", []):
+        for elem in slide.get("pageElements", []):
+            shape = elem.get("shape", {})
+            text_elems = shape.get("text", {}).get("textElements", [])
+            for te in text_elems:
+                tr = te.get("textRun", {})
+                if not tr:
+                    continue
+                ts = tr.get("style", {})
+                ff = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
+                if ff in replace_fonts:
+                    start = te.get("startIndex", 0)
+                    end = te.get("endIndex", 0)
+                    if end > start:
+                        reqs.append({"updateTextStyle": {
+                            "objectId": elem["objectId"],
+                            "style": {"fontFamily": target_font},
+                            "textRange": {"type": "FIXED_RANGE", "startIndex": start, "endIndex": end},
+                            "fields": "fontFamily",
+                        }})
+                        count += 1
+
+    if reqs:
+        # Batch in chunks of 100 to avoid API limits
+        for i in range(0, len(reqs), 100):
+            execute_with_retry(service.presentations().batchUpdate(
+                presentationId=presentation_id, body={"requests": reqs[i:i+100]}))
+
+    return {"font_replacements": count, "target_font": target_font}
+
+
+def audit_styles(presentation_id: str) -> dict:
+    """Analyze a deck and report style inconsistencies for LLM-driven fixes."""
+    service = _get_service()
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+
+    fonts = {}
+    sizes = {}
+    colors = {}
+    tables = []
+    slide_count = len(pres.get("slides", []))
+
+    for s_idx, slide in enumerate(pres.get("slides", [])):
+        for elem in slide.get("pageElements", []):
+            obj_id = elem["objectId"]
+            shape = elem.get("shape", {})
+            table = elem.get("table", {})
+
+            for te in shape.get("text", {}).get("textElements", []):
+                tr = te.get("textRun", {})
+                if not tr or not tr.get("content", "").strip():
+                    continue
+                ts = tr.get("style", {})
+                ff = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
+                if ff:
+                    fonts[ff] = fonts.get(ff, 0) + 1
+                fs = ts.get("fontSize", {}).get("magnitude")
+                if fs:
+                    sizes[fs] = sizes.get(fs, 0) + 1
+                fg = ts.get("foregroundColor", {}).get("opaqueColor", {}).get("rgbColor", {})
+                if fg:
+                    r, g, b = fg.get("red", 0), fg.get("green", 0), fg.get("blue", 0)
+                    hex_c = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+                    colors[hex_c] = colors.get(hex_c, 0) + 1
+
+            if table:
+                has_header_bg = False
+                first_row = table.get("tableRows", [{}])[0] if table.get("tableRows") else {}
+                for cell in first_row.get("tableCells", []):
+                    bg = cell.get("tableCellProperties", {}).get("tableCellBackgroundFill", {})
+                    if bg.get("solidFill"):
+                        has_header_bg = True
+                        break
+                tables.append({
+                    "slide": s_idx + 1,
+                    "object_id": obj_id,
+                    "rows": table.get("rows", 0),
+                    "columns": table.get("columns", 0),
+                    "has_styled_header": has_header_bg,
+                })
+
+    issues = []
+    if len(fonts) > 2:
+        issues.append(f"Too many fonts ({len(fonts)}): {', '.join(sorted(fonts, key=fonts.get, reverse=True))}")
+    if len(sizes) > 6:
+        issues.append(f"Too many font sizes ({len(sizes)}): inconsistent hierarchy")
+    if len(colors) > 6:
+        issues.append(f"Too many text colors ({len(colors)}): no consistent palette")
+    for t in tables:
+        if not t["has_styled_header"]:
+            issues.append(f"Slide {t['slide']}: table ({t['rows']}x{t['columns']}) has no styled header — object_id: {t['object_id']}")
+    smallest = min(sizes.keys()) if sizes else 0
+    if smallest and smallest < 9:
+        issues.append(f"Smallest font is {smallest}pt — may be unreadable")
+
+    return {
+        "slides": slide_count,
+        "fonts": dict(sorted(fonts.items(), key=lambda x: -x[1])),
+        "font_sizes": dict(sorted(sizes.items(), key=lambda x: -x[1])),
+        "text_colors": dict(sorted(colors.items(), key=lambda x: -x[1])[:8]),
+        "tables": tables,
+        "issues": issues,
+    }
+
+
 def add_page_numbers(presentation_id: str, theme: str | None = None) -> dict:
     """Add page numbers to all slides (skips slides with colored backgrounds)."""
     from .design import get_palette
@@ -1805,6 +2243,283 @@ def add_page_numbers(presentation_id: str, theme: str | None = None) -> dict:
         execute_with_retry(service.presentations().batchUpdate(
             presentationId=presentation_id, body={"requests": all_reqs}))
     return {"slides_numbered": numbered, "total_slides": len(slides)}
+
+
+def reorder_slides(presentation_id: str, slide_ids: list[str], position: int = 0) -> dict:
+    """Move slides to a new position in the deck."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"updateSlidesPosition": {
+            "slideObjectIds": slide_ids,
+            "insertionIndex": position,
+        }}]},
+    ))
+    return {"moved": len(slide_ids), "to_position": position}
+
+
+def delete_element(presentation_id: str, element_id: str) -> dict:
+    """Delete any element from a slide."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"deleteObject": {"objectId": element_id}}]},
+    ))
+    return {"deleted": element_id}
+
+
+def add_hyperlink(
+    presentation_id: str, element_id: str, url: str,
+    start_index: int | None = None, end_index: int | None = None,
+) -> dict:
+    """Add a hyperlink to text in an existing element."""
+    from shared.utils import hex_to_rgb
+    service = _get_service()
+    text_range = {"type": "ALL"}
+    if start_index is not None and end_index is not None:
+        text_range = {"type": "FIXED_RANGE", "startIndex": start_index, "endIndex": end_index}
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"updateTextStyle": {
+            "objectId": element_id,
+            "style": {"link": {"url": url}},
+            "textRange": text_range,
+            "fields": "link",
+        }}]},
+    ))
+    return {"element_id": element_id, "url": url}
+
+
+def insert_table_rows(
+    presentation_id: str, table_id: str, row_index: int, count: int = 1, below: bool = True,
+) -> dict:
+    """Insert rows into an existing table."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"insertTableRows": {
+            "tableObjectId": table_id,
+            "cellLocation": {"rowIndex": row_index},
+            "insertBelow": below,
+            "number": count,
+        }}]},
+    ))
+    return {"table_id": table_id, "rows_added": count}
+
+
+def delete_table_row(presentation_id: str, table_id: str, row_index: int) -> dict:
+    """Delete a row from an existing table."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"deleteTableRow": {
+            "tableObjectId": table_id,
+            "cellLocation": {"rowIndex": row_index},
+        }}]},
+    ))
+    return {"table_id": table_id, "row_deleted": row_index}
+
+
+def insert_table_columns(
+    presentation_id: str, table_id: str, col_index: int, count: int = 1, right: bool = True,
+) -> dict:
+    """Insert columns into an existing table."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"insertTableColumns": {
+            "tableObjectId": table_id,
+            "cellLocation": {"columnIndex": col_index},
+            "insertRight": right,
+            "number": count,
+        }}]},
+    ))
+    return {"table_id": table_id, "columns_added": count}
+
+
+def delete_table_column(presentation_id: str, table_id: str, col_index: int) -> dict:
+    """Delete a column from an existing table."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"deleteTableColumn": {
+            "tableObjectId": table_id,
+            "cellLocation": {"columnIndex": col_index},
+        }}]},
+    ))
+    return {"table_id": table_id, "column_deleted": col_index}
+
+
+def merge_table_cells(
+    presentation_id: str, table_id: str,
+    row: int, col: int, row_span: int, col_span: int,
+) -> dict:
+    """Merge a range of cells in a table."""
+    service = _get_service()
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"mergeTableCells": {
+            "objectId": table_id,
+            "tableRange": {
+                "location": {"rowIndex": row, "columnIndex": col},
+                "rowSpan": row_span, "columnSpan": col_span,
+            },
+        }}]},
+    ))
+    return {"table_id": table_id, "merged": f"{row_span}x{col_span} from [{row},{col}]"}
+
+
+def batch_replace_text(
+    presentation_id: str, replacements: dict[str, str],
+) -> dict:
+    """Replace multiple text placeholders in one call. E.g. {"{{name}}": "John", "{{date}}": "2025-01-15"}"""
+    service = _get_service()
+    reqs = []
+    for find, replace in replacements.items():
+        reqs.append({"replaceAllText": {
+            "containsText": {"text": find, "matchCase": True},
+            "replaceText": replace,
+        }})
+    result = execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id, body={"requests": reqs}))
+    total = sum(
+        r.get("replaceAllText", {}).get("occurrencesChanged", 0)
+        for r in result.get("replies", []))
+    return {"replacements": len(replacements), "total_changed": total}
+
+
+def update_shape_fill(
+    presentation_id: str, element_id: str,
+    fill_color: str | None = None, outline_color: str | None = None,
+    outline_weight: float | None = None,
+) -> dict:
+    """Change fill color and/or outline on an existing shape."""
+    from shared.utils import hex_to_rgb
+    service = _get_service()
+    props: dict = {}
+    fields = []
+    if fill_color:
+        props["shapeBackgroundFill"] = {"solidFill": {"color": {"rgbColor": hex_to_rgb(fill_color)}}}
+        fields.append("shapeBackgroundFill")
+    if outline_color:
+        outline: dict = {"outlineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(outline_color)}}}}
+        if outline_weight:
+            outline["weight"] = {"magnitude": outline_weight, "unit": "PT"}
+        props["outline"] = outline
+        fields.append("outline")
+    if not fields:
+        return {"element_id": element_id, "updated": False}
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": [{"updateShapeProperties": {
+            "objectId": element_id, "shapeProperties": props, "fields": ",".join(fields),
+        }}]},
+    ))
+    return {"element_id": element_id, "updated": True}
+
+
+def apply_brand_kit(
+    presentation_id: str,
+    heading_font: str,
+    body_font: str,
+    accent_color: str,
+    text_color: str,
+    replace_fonts: list[str] | None = None,
+) -> dict:
+    """Enforce brand consistency: normalize fonts + apply palette across the deck."""
+    results = {}
+    # Step 1: Normalize fonts
+    if replace_fonts:
+        r1 = normalize_fonts(presentation_id, body_font, replace_fonts)
+        results["font_replacements"] = r1["font_replacements"]
+    # Step 2: Style all unstyled tables
+    audit = audit_styles(presentation_id)
+    for t in audit["tables"]:
+        if not t["has_styled_header"]:
+            from shared.utils import hex_to_rgb
+            style_existing_table(
+                presentation_id, t["object_id"],
+                header_bg=accent_color, header_text_color="#FFFFFF",
+                alt_row_color="#F5F5F5", border_color="#E0E0E0",
+                font_family=body_font,
+            )
+            results.setdefault("tables_styled", 0)
+            results["tables_styled"] = results.get("tables_styled", 0) + 1
+    results["heading_font"] = heading_font
+    results["body_font"] = body_font
+    results["accent_color"] = accent_color
+    return results
+
+
+def from_markdown(
+    presentation_id: str, markdown: str, theme: str | None = None,
+) -> dict:
+    """Generate slides from Markdown. # = title slide, ## = section, ### = content slide, ``` = code, > = quote, | = table."""
+    slides_created = 0
+    lines = markdown.strip().split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        if line.startswith("# ") and not line.startswith("## "):
+            # Title slide
+            title = line[2:].strip()
+            subtitle = ""
+            if i + 1 < len(lines) and lines[i + 1].strip() and not lines[i + 1].strip().startswith("#"):
+                i += 1
+                subtitle = lines[i].strip()
+            add_title_slide(presentation_id, title, subtitle, theme=theme)
+            slides_created += 1
+
+        elif line.startswith("## ") and not line.startswith("### "):
+            # Section slide
+            add_section_slide(presentation_id, line[3:].strip(), theme=theme)
+            slides_created += 1
+
+        elif line.startswith("### "):
+            # Content slide — collect body until next heading
+            title = line[4:].strip()
+            body_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("#"):
+                if lines[i].strip():
+                    body_lines.append(lines[i].strip())
+                i += 1
+            i -= 1  # back up for the outer loop
+            if body_lines:
+                # Check if it's a code block
+                if body_lines[0].startswith("```"):
+                    lang = body_lines[0][3:].strip()
+                    code = "\n".join(body_lines[1:-1] if body_lines[-1] == "```" else body_lines[1:])
+                    add_code_slide(presentation_id, title, code, lang, theme=theme)
+                # Check if it's a table
+                elif "|" in body_lines[0]:
+                    rows = []
+                    for bl in body_lines:
+                        if bl.startswith("|") and "---" not in bl:
+                            cells = [c.strip() for c in bl.strip("|").split("|")]
+                            rows.append(cells)
+                    if len(rows) >= 2:
+                        add_styled_table_slide(presentation_id, title, rows[0], rows[1:], theme=theme)
+                else:
+                    add_content_slide(presentation_id, title, "\n".join(body_lines), theme=theme)
+            else:
+                add_content_slide(presentation_id, title, "", theme=theme)
+            slides_created += 1
+
+        elif line.startswith("> "):
+            # Quote slide
+            quote = line[2:].strip()
+            attribution = ""
+            if i + 1 < len(lines) and lines[i + 1].strip().startswith("—"):
+                i += 1
+                attribution = lines[i].strip()[1:].strip()
+            add_quote_slide(presentation_id, quote, attribution, theme=theme)
+            slides_created += 1
+
+        i += 1
+
+    return {"slides_created": slides_created}
 
 
 def _extract_text(text_elements: list) -> str:

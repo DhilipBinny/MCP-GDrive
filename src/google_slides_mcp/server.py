@@ -1,10 +1,12 @@
-"""Google Slides MCP Server — create and edit presentations."""
+"""Google Slides MCP Server — consolidated tools for create, edit, and manage presentations."""
 
 from __future__ import annotations
 
 import sys
+import json
 import logging
 import functools
+from typing import Literal
 
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
@@ -16,7 +18,7 @@ from shared import drive_service
 
 mcp = FastMCP(
     "google-slides-mcp",
-    instructions="MCP server for Google Slides — create and edit presentations",
+    instructions="MCP server for Google Slides — create, read, edit, and manage presentations with 8 consolidated tools",
 )
 
 
@@ -30,9 +32,9 @@ def _handle_errors(func):
             if status == 404:
                 return "ERROR: Presentation or slide not found. Check the ID is correct."
             elif status == 403:
-                return "ERROR: Permission denied. You may not have access to this presentation."
+                return "ERROR: Permission denied. You may not have access."
             elif status == 429:
-                return "ERROR: Google API rate limit exceeded. Wait a moment and try again."
+                return "ERROR: Rate limit exceeded. Wait and try again."
             else:
                 return f"ERROR: Google API returned {status}: {e._get_reason()}"
         except RuntimeError as e:
@@ -40,12 +42,13 @@ def _handle_errors(func):
         except (FileNotFoundError, ValueError) as e:
             return f"ERROR: {e}"
         except Exception as e:
-            return f"ERROR: Unexpected — {type(e).__name__}: {e}"
+            return f"ERROR: {type(e).__name__}: {e}"
     return wrapper
 
 
-# ── Slides Tools ───────────────────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════
+# TOOL 1: CREATE
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
@@ -54,834 +57,575 @@ def gslides_create(title: str, folder_id: str | None = None) -> str:
 
     Args:
         title: Presentation title
-        folder_id: Optional Drive folder ID to place it in
+        folder_id: Optional Drive folder ID
     """
     result = slides_service.create_presentation(title)
     if folder_id:
         drive_service.move_file(result["presentation_id"], folder_id)
     url = f"https://docs.google.com/presentation/d/{result['presentation_id']}/edit"
-    return f"Created: **{result['title']}**\n- ID: `{result['presentation_id']}`\n- Slides: {len(result['slides'])}\n- URL: {url}"
+    return f"Created: **{result['title']}**\n- ID: `{result['presentation_id']}`\n- URL: {url}"
 
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 2: READ
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gslides_read(presentation_id: str) -> str:
-    """Read all slides from a presentation — titles, body text, tables, images.
+    """Read all slides — titles, text, tables, images, element IDs.
 
     Args:
         presentation_id: The presentation ID
     """
     result = slides_service.get_presentation(presentation_id)
     lines = [f"# {result['title']} ({result['total_slides']} slides)\n"]
-
     for i, slide in enumerate(result["slides"]):
         lines.append(f"## Slide {i + 1} (`{slide['slide_id']}`)")
         for elem in slide["elements"]:
             if elem["type"] == "table":
-                lines.append(f"  [TABLE {elem['rows']}x{elem['columns']}]")
+                lines.append(f"  [TABLE {elem['rows']}x{elem['columns']}] `{elem.get('object_id', '')}`")
                 for row in elem["data"]:
                     lines.append(f"    | {' | '.join(row)} |")
             elif elem["type"] == "image":
-                lines.append(f"  [IMAGE] {elem['url'][:60]}...")
-            elif elem["text"]:
+                lines.append(f"  [IMAGE] `{elem.get('object_id', '')}`")
+            elif elem.get("text"):
                 label = elem["type"].upper()
                 text = elem["text"][:200].replace("\n", " | ")
-                lines.append(f"  [{label}] {text}")
+                lines.append(f"  [{label}] {text} `{elem.get('object_id', '')}`")
         lines.append("")
-
     return "\n".join(lines)
 
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 3: ADD SLIDE (all slide types via `type` parameter)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gslides_add_slide(
     presentation_id: str,
-    title: str,
-    body: str = "",
-    speaker_notes: str = "",
-) -> str:
-    """Add a slide with a title and body text. Multi-line body becomes a bullet list.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        body: Body text (each line becomes a bullet point)
-        speaker_notes: Optional speaker notes
-    """
-    result = slides_service.add_slide(
-        presentation_id, title, body, speaker_notes=speaker_notes
-    )
-    return f"Added slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_table_slide(
-    presentation_id: str,
-    title: str,
-    headers: list[str],
-    rows: list[list[str]],
-) -> str:
-    """Add a slide with a formatted data table. Header row is bolded.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        headers: Column header labels
-        rows: Data rows (list of lists)
-    """
-    result = slides_service.add_table_slide(presentation_id, title, headers, rows)
-    return f"Added table slide: **{result['title']}** ({result['table']}) (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_image_slide(
-    presentation_id: str,
-    image_url: str,
+    type: str,
     title: str = "",
-    as_background: bool = False,
+    body: str = "",
+    subtitle: str = "",
+    author: str = "",
+    section_number: str = "",
+    quote: str = "",
+    attribution: str = "",
+    headers: list[str] | None = None,
+    rows: list[list[str]] | None = None,
+    metrics: list[dict] | None = None,
+    code: str = "",
+    language: str = "",
+    col1: str = "",
+    col2: str = "",
+    col1_title: str = "",
+    col2_title: str = "",
+    image_url: str = "",
+    image_side: str = "left",
+    spreadsheet_id: str = "",
+    chart_id: int = 0,
+    speaker_notes: str = "",
+    layout_id: str = "",
+    texts: dict | None = None,
+    theme: str | None = None,
+    title_font: str | None = None,
+    title_size: float | None = None,
+    body_font: str | None = None,
+    body_size: float | None = None,
+    title_color: str | None = None,
+    body_color: str | None = None,
+    bg_color: str | None = None,
+    line_spacing: float | None = None,
 ) -> str:
-    """Add a slide with an image. Can be positioned in content area or as full-slide background.
+    """Add a slide to a presentation. The `type` parameter selects the layout.
 
-    The image must be accessible via a public URL or a Google Drive URL with sharing enabled.
+    TYPES:
+    - "title" — title slide (uses: title, subtitle, author)
+    - "section" — section divider with accent background (uses: title, section_number)
+    - "content" — bullet list slide (uses: title, body). Multi-line body → auto-bullets
+    - "two_column" — two columns (uses: title, col1, col2, col1_title, col2_title)
+    - "table" — styled table (uses: title, headers, rows)
+    - "metrics" — big numbers (uses: title, metrics=[{"value": "98%", "label": "Uptime"}])
+    - "quote" — quote with accent bar (uses: quote, attribution)
+    - "code" — code block on dark bg (uses: title, code, language)
+    - "image_text" — image + text side by side (uses: title, image_url, body, image_side)
+    - "chart" — embedded Sheets chart (uses: title, spreadsheet_id, chart_id)
+    - "image" — image slide (uses: title, image_url)
+    - "blank" — blank slide with optional title (uses: title)
+    - "from_layout" — use a template layout by ID (uses: layout_id, texts={"TITLE_0": "...", "BODY_0": "..."})
+
+    All styling params are OPTIONAL — defaults from theme. Override to customize.
 
     Args:
         presentation_id: The presentation ID
-        image_url: URL of the image
-        title: Optional slide title (omit for blank + image)
-        as_background: True to set as full-slide background image
+        type: Slide type (see above)
+        title: Slide title
+        body: Body text (content/image_text types)
+        subtitle: Subtitle (title type)
+        author: Author line (title type)
+        section_number: Section number like "01" (section type)
+        quote: Quote text (quote type)
+        attribution: Quote attribution (quote type)
+        headers: Table column headers (table type)
+        rows: Table data rows (table type)
+        metrics: List of {"value": "...", "label": "..."} (metrics type)
+        code: Code content (code type)
+        language: Code language label (code type)
+        col1: Left column text (two_column type)
+        col2: Right column text (two_column type)
+        col1_title: Left column heading (two_column type)
+        col2_title: Right column heading (two_column type)
+        image_url: Public image URL (image/image_text types)
+        image_side: "left" or "right" (image_text type)
+        spreadsheet_id: Source spreadsheet (chart type)
+        chart_id: Chart ID from gsheets_add_chart (chart type)
+        speaker_notes: Optional speaker notes
+        layout_id: Layout object ID from template (from_layout type — use gslides_manage action=list_layouts)
+        texts: Dict mapping placeholder keys to text (from_layout type — e.g. {"TITLE_0": "...", "BODY_0": "..."})
+        theme: Color theme (or set deck-wide via gslides_manage action=set_theme)
+        title_font: Override title font
+        title_size: Override title size (pt)
+        body_font: Override body font
+        body_size: Override body size (pt)
+        title_color: Override title color hex
+        body_color: Override body color hex
+        bg_color: Override slide background color hex
+        line_spacing: Override line spacing (%)
     """
-    result = slides_service.add_image_slide(presentation_id, image_url, title, as_background)
-    mode = "background" if result["background"] else "content"
-    return f"Added image slide ({mode}): **{result['title']}** (`{result['slide_id']}`)"
+    style = {k: v for k, v in {
+        "title_font": title_font, "title_size": title_size,
+        "body_font": body_font, "body_size": body_size,
+        "title_color": title_color, "body_color": body_color,
+        "bg_color": bg_color, "line_spacing": line_spacing,
+    }.items() if v is not None}
 
+    t = type.lower()
+
+    if t == "title":
+        r = slides_service.add_title_slide(presentation_id, title, subtitle, author, theme, **style)
+    elif t == "section":
+        r = slides_service.add_section_slide(presentation_id, title, section_number, theme)
+    elif t == "content":
+        r = slides_service.add_content_slide(presentation_id, title, body, speaker_notes, theme, **style)
+    elif t == "two_column":
+        r = slides_service.add_two_column_slide(presentation_id, title, col1, col2, col1_title, col2_title, theme)
+    elif t == "table":
+        r = slides_service.add_styled_table_slide(presentation_id, title, headers or [], rows or [], theme)
+    elif t == "metrics":
+        r = slides_service.add_metrics_slide(presentation_id, title, metrics or [], theme)
+    elif t == "quote":
+        r = slides_service.add_quote_slide(presentation_id, quote, attribution, theme)
+    elif t == "code":
+        r = slides_service.add_code_slide(presentation_id, title, code, language, theme)
+    elif t == "image_text":
+        r = slides_service.add_image_text_slide(presentation_id, title, image_url, body, image_side, theme)
+    elif t == "chart":
+        r = slides_service.add_chart_slide(presentation_id, spreadsheet_id, chart_id, title, theme=theme)
+    elif t == "image":
+        r = slides_service.add_image_slide(presentation_id, image_url, title, theme=theme)
+    elif t == "blank":
+        r = slides_service.add_slide(presentation_id, title, body, "BLANK", speaker_notes, theme)
+    elif t == "from_layout":
+        if not layout_id:
+            return "ERROR: layout_id required for from_layout type. Use gslides_manage action=list_layouts to find layout IDs."
+        r = slides_service.add_slide_from_layout(presentation_id, layout_id, texts)
+    else:
+        return f"ERROR: Unknown slide type '{type}'. Use: title, section, content, two_column, table, metrics, quote, code, image_text, chart, image, blank, from_layout"
+
+    return f"Added {t} slide: **{r.get('title', title or quote[:30])}** (`{r['slide_id']}`)"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 4: EDIT (modify existing elements)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
-def gslides_delete_slide(presentation_id: str, slide_id: str) -> str:
-    """Delete a slide from a presentation.
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide object ID (from gslides_read)
-    """
-    result = slides_service.delete_slide(presentation_id, slide_id)
-    return f"Deleted slide `{result['deleted']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_shape(
+def gslides_edit(
     presentation_id: str,
-    slide_id: str,
-    text: str = "",
-    shape_type: str = "rounded",
-    x: float = 1.0, y: float = 1.0,
-    width: float = 2.0, height: float = 0.7,
-    fill_color: str | None = None,
-    text_color: str | None = None,
-    font_size: int = 10,
-    bold: bool = False,
-    outline_color: str | None = None,
-) -> str:
-    """Add a shape to an existing slide. Returns the shape object ID.
-
-    Colors default to the deck theme (set via gslides_set_theme). Text color
-    auto-contrasts: white on dark fills, dark on light fills.
-
-    Coordinates in inches. Standard slide is 10 x 5.625 inches.
-    Shape types: rounded, rectangle, circle, diamond, database, cloud,
-    hexagon, chevron, cube, process, decision, terminator, or any Google Slides ShapeType.
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide to add the shape to
-        text: Text inside the shape
-        shape_type: Shape type name or alias
-        x: X position in inches from left
-        y: Y position in inches from top
-        width: Width in inches
-        height: Height in inches
-        fill_color: Fill color hex (default: theme accent)
-        text_color: Text color hex (default: auto-contrast based on fill)
-        font_size: Font size in points
-        bold: Bold text
-        outline_color: Optional border color hex
-    """
-    result = slides_service.add_shape(
-        presentation_id, slide_id, shape_type, x, y, width, height,
-        text, fill_color, text_color, font_size, bold, outline_color,
-    )
-    return f"Added shape `{result['shape_id']}` — {result['text'] or shape_type}"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_connector(
-    presentation_id: str,
-    slide_id: str,
-    from_shape_id: str,
-    to_shape_id: str,
-    from_side: str = "bottom",
-    to_side: str = "top",
-    connector_type: str = "STRAIGHT",
+    action: str,
+    element_id: str = "",
+    table_id: str = "",
+    font_family: str | None = None,
+    font_size: float | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
     color: str | None = None,
-    weight: float = 1.5,
-    end_arrow: str = "OPEN_ARROW",
+    fill_color: str | None = None,
+    outline_color: str | None = None,
+    outline_weight: float | None = None,
+    header_bg: str | None = None,
+    header_text_color: str = "#FFFFFF",
+    alt_row_color: str | None = None,
+    border_color: str | None = None,
+    target_font: str = "",
+    replace_fonts: list[str] | None = None,
+    heading_font: str = "",
+    body_font: str = "",
+    accent_color: str = "",
+    text_color: str = "",
+    url: str = "",
+    x: float | None = None,
+    y: float | None = None,
+    width: float | None = None,
+    height: float | None = None,
 ) -> str:
-    """Connect two shapes with a line/arrow. Color defaults to theme neutral gray.
+    """Edit existing elements in a presentation.
+
+    ACTIONS:
+    - "text_style" — change font/size/color on element (uses: element_id, font_family, font_size, bold, italic, color)
+    - "shape_fill" — change fill/outline on shape (uses: element_id, fill_color, outline_color, outline_weight)
+    - "table_style" — style a table (uses: table_id, header_bg, alt_row_color, border_color, font_family, font_size)
+    - "normalize_fonts" — replace fonts across deck (uses: target_font, replace_fonts)
+    - "brand_kit" — enforce brand across deck (uses: heading_font, body_font, accent_color, text_color, replace_fonts)
+    - "hyperlink" — add link to text (uses: element_id, url)
+    - "move_resize" — move/resize element (uses: element_id, x, y, width, height — inches)
+    - "background" — set slide background (uses: element_id=slide_id, color or fill_color)
 
     Args:
         presentation_id: The presentation ID
-        slide_id: The slide containing both shapes
-        from_shape_id: Source shape object ID
-        to_shape_id: Target shape object ID
-        from_side: Side to connect from — top, right, bottom, left
-        to_side: Side to connect to — top, right, bottom, left
-        connector_type: STRAIGHT, BENT, or CURVED
-        color: Line color hex (default: theme neutral gray)
-        weight: Line weight in points (default: 1.5)
-        end_arrow: Arrow style — OPEN_ARROW, FILL_ARROW, STEALTH_ARROW, NONE
-    """
-    result = slides_service.add_connector(
-        presentation_id, slide_id, from_shape_id, to_shape_id,
-        from_side, to_side, connector_type, color, weight, end_arrow,
-    )
-    return f"Connected `{result['from']}` → `{result['to']}` (`{result['connector_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_text_box(
-    presentation_id: str,
-    slide_id: str,
-    text: str,
-    x: float = 1.0, y: float = 1.0,
-    width: float = 2.0, height: float = 0.5,
-    font_size: int = 9,
-    font_color: str | None = None,
-    bold: bool = False,
-) -> str:
-    """Add a text label to a slide (no background/border). Color defaults to theme secondary text.
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide to add text to
-        text: Label text
-        x: X position in inches
+        action: Edit action (see above)
+        element_id: Target element ID (from gslides_read)
+        table_id: Target table ID (for table_style)
+        font_family: Font family
+        font_size: Font size in pt
+        bold: Bold text
+        italic: Italic text
+        color: Text color hex
+        fill_color: Shape fill color hex
+        outline_color: Shape outline color hex
+        outline_weight: Outline weight in pt
+        header_bg: Table header background hex
+        header_text_color: Table header text color
+        alt_row_color: Table alternating row color hex
+        border_color: Table border color hex
+        target_font: Target font for normalize_fonts
+        replace_fonts: Fonts to replace
+        heading_font: Brand heading font
+        body_font: Brand body font
+        accent_color: Brand accent color hex
+        text_color: Brand text color hex
+        url: Hyperlink URL
+        x: X position in inches (move_resize)
         y: Y position in inches
         width: Width in inches
         height: Height in inches
-        font_size: Font size in points
-        font_color: Text color hex (default: theme secondary text)
-        bold: Bold text
     """
-    result = slides_service.add_text_box(
-        presentation_id, slide_id, text, x, y, width, height, font_size, font_color, bold,
-    )
-    return f"Added text box `{result['text_box_id']}` — {result['text']}"
+    a = action.lower()
 
+    if a == "text_style":
+        r = slides_service.update_text_style(presentation_id, element_id, font_family, font_size, bold, italic, color)
+        return f"Updated text style on `{r['element_id']}`" if r["updated"] else "No changes"
+    elif a == "shape_fill":
+        r = slides_service.update_shape_fill(presentation_id, element_id, fill_color, outline_color, outline_weight)
+        return f"Updated shape `{r['element_id']}`" if r["updated"] else "No changes"
+    elif a == "table_style":
+        r = slides_service.style_existing_table(presentation_id, table_id, header_bg, header_text_color, alt_row_color, border_color, font_size, font_size, font_family)
+        return f"Styled table `{r['table_id']}` ({r['rows']}x{r['cols']})"
+    elif a == "normalize_fonts":
+        r = slides_service.normalize_fonts(presentation_id, target_font, replace_fonts or [])
+        return f"Replaced {r['font_replacements']} text runs → **{r['target_font']}**"
+    elif a == "brand_kit":
+        r = slides_service.apply_brand_kit(presentation_id, heading_font, body_font, accent_color, text_color, replace_fonts)
+        parts = [f"Brand kit applied: {r['heading_font']} + {r['body_font']}"]
+        if r.get("font_replacements"): parts.append(f"Replaced {r['font_replacements']} runs")
+        if r.get("tables_styled"): parts.append(f"Styled {r['tables_styled']} table(s)")
+        return "\n".join(parts)
+    elif a == "hyperlink":
+        r = slides_service.add_hyperlink(presentation_id, element_id, url)
+        return f"Added link → {r['url']}"
+    elif a == "move_resize":
+        r = slides_service.update_element(presentation_id, element_id, x, y, width, height)
+        return f"Updated element `{r['element_id']}`"
+    elif a == "background":
+        r = slides_service.set_slide_background(presentation_id, element_id, color=fill_color or color)
+        return f"Set background on `{r['slide_id']}`"
+    else:
+        return f"ERROR: Unknown action '{action}'. Use: text_style, shape_fill, table_style, normalize_fonts, brand_kit, hyperlink, move_resize, background"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 5: MANAGE (structural operations)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
-def gslides_add_diagram(
+def gslides_manage(
     presentation_id: str,
-    title: str,
-    nodes: list[dict],
-    connections: list[dict] | None = None,
-    style: str = "corporate",
+    action: str,
+    slide_id: str = "",
+    slide_ids: list[str] | None = None,
+    element_id: str = "",
+    element_ids: list[str] | None = None,
+    position: int = 0,
+    operation: str = "BRING_TO_FRONT",
+    table_id: str = "",
+    row_index: int = 0,
+    col_index: int = 0,
+    count: int = 1,
+    row_span: int = 1,
+    col_span: int = 1,
+    notes: str = "",
+    find: str = "",
+    replace: str = "",
+    replacements: dict | None = None,
+    theme: str = "",
+    footer: str = "",
+    image_url: str = "",
+    placeholder_text: str = "",
 ) -> str:
-    """Create a full diagram slide with auto-positioned nodes and smart connectors.
+    """Structural operations on a presentation.
 
-    nodes: list of node objects with:
-        - id: unique identifier (used in connections)
-        - label: text displayed in the node
-        - type: shape type — rounded, rectangle, database, cloud, hexagon, diamond, etc.
-        - tier: row number for auto-layout (1=top, 2=middle, 3=bottom). Or set x/y manually.
-        - x, y, w, h: optional position/size in inches (auto-calculated if omitted)
-        - color: optional fill color hex (auto-assigned from palette if omitted)
-
-    connections: list of connection objects with:
-        - from: source node ID
-        - to: target node ID
-        - from_side: top/right/bottom/left (default: bottom)
-        - to_side: top/right/bottom/left (default: top)
-        - label: optional text on the arrow
-        - type: STRAIGHT/BENT/CURVED (default: STRAIGHT)
-
-    style: color palette — corporate, tech, minimal, colorful
+    ACTIONS:
+    - "delete_slide" — delete a slide (uses: slide_id)
+    - "duplicate_slide" — clone a slide (uses: slide_id)
+    - "reorder" — move slides (uses: slide_ids, position)
+    - "delete_element" — delete any element (uses: element_id)
+    - "group" — group elements (uses: element_ids)
+    - "ungroup" — ungroup (uses: element_ids)
+    - "z_order" — change layer order (uses: element_ids, operation=BRING_TO_FRONT/SEND_TO_BACK)
+    - "replace_text" — find/replace text (uses: find, replace)
+    - "batch_replace" — replace multiple placeholders (uses: replacements={"{{key}}": "value"})
+    - "replace_image" — replace shapes with image (uses: placeholder_text, image_url)
+    - "speaker_notes" — set notes (uses: slide_id, notes)
+    - "set_theme" — set deck theme (uses: theme=modern/corporate/dark/warm)
+    - "set_footer" — set deck footer (uses: footer)
+    - "add_page_numbers" — add page numbers to all slides
+    - "get_thumbnail" — get slide PNG URL (uses: slide_id)
+    - "insert_table_rows" — add rows (uses: table_id, row_index, count)
+    - "delete_table_row" — remove row (uses: table_id, row_index)
+    - "merge_table_cells" — merge cells (uses: table_id, row_index, col_index, row_span, col_span)
+    - "list_layouts" — list available layouts in the deck (for from_layout slides)
+    - "create_from_template" — copy a template deck, clear content, return clean deck with theme (uses: find as template_id, name, folder_id)
 
     Args:
         presentation_id: The presentation ID
-        title: Diagram title
-        nodes: Node definitions
-        connections: Connection definitions
-        style: Color palette name
+        action: Operation (see above)
+        slide_id: Target slide ID
+        slide_ids: List of slide IDs (reorder, etc.)
+        element_id: Target element ID
+        element_ids: List of element IDs (group, z_order)
+        position: Target position for reorder
+        operation: Z-order operation
+        table_id: Target table ID
+        row_index: Row index for table ops
+        col_index: Column index for table ops
+        count: Number of rows/columns to insert
+        row_span: Rows to merge
+        col_span: Columns to merge
+        notes: Speaker notes text
+        find: Text to find
+        replace: Replacement text
+        replacements: Dict of find→replace pairs
+        theme: Theme name (modern/corporate/dark/warm)
+        footer: Footer text
+        image_url: Image URL for replace_image
+        placeholder_text: Text to match for replace_image
     """
-    result = slides_service.add_diagram(
-        presentation_id, title, nodes, connections, style,
-    )
-    return f"Added diagram: **{result['title']}** ({result['nodes']} nodes, {result['connections']} connections) — slide `{result['slide_id']}`"
+    a = action.lower()
 
+    if a == "delete_slide":
+        r = slides_service.delete_slide(presentation_id, slide_id)
+        return f"Deleted slide `{r['deleted']}`"
+    elif a == "duplicate_slide":
+        r = slides_service.duplicate_slide(presentation_id, slide_id)
+        return f"Duplicated `{r['original']}` → `{r['duplicate']}`"
+    elif a == "reorder":
+        r = slides_service.reorder_slides(presentation_id, slide_ids or [], position)
+        return f"Moved {r['moved']} slide(s) to position {r['to_position']}"
+    elif a == "delete_element":
+        r = slides_service.delete_element(presentation_id, element_id)
+        return f"Deleted `{r['deleted']}`"
+    elif a == "group":
+        r = slides_service.group_elements(presentation_id, element_ids or [])
+        return f"Grouped → `{r['group_id']}`"
+    elif a == "ungroup":
+        r = slides_service.ungroup_elements(presentation_id, element_ids or [])
+        return f"Ungrouped {len(r['ungrouped'])} group(s)"
+    elif a == "z_order":
+        r = slides_service.z_order(presentation_id, element_ids or [], operation)
+        return f"{r['operation']} on {len(r['elements'])} element(s)"
+    elif a == "replace_text":
+        r = slides_service.replace_text(presentation_id, find, replace)
+        return f"Replaced {r['occurrences_replaced']} occurrence(s)"
+    elif a == "batch_replace":
+        r = slides_service.batch_replace_text(presentation_id, replacements or {})
+        return f"Replaced {r['replacements']} placeholders ({r['total_changed']} occurrences)"
+    elif a == "replace_image":
+        r = slides_service.replace_image(presentation_id, placeholder_text, image_url)
+        return f"Replaced {r['occurrences_replaced']} shape(s) with image"
+    elif a == "speaker_notes":
+        r = slides_service.set_speaker_notes(presentation_id, slide_id, notes)
+        return f"Set notes on `{r['slide_id']}`"
+    elif a == "set_theme":
+        r = slides_service.set_deck_theme(presentation_id, theme)
+        return f"Theme → **{r['theme']}**"
+    elif a == "set_footer":
+        r = slides_service.set_deck_footer(presentation_id, footer)
+        return f"Footer → **{r['footer']}**"
+    elif a == "add_page_numbers":
+        r = slides_service.add_page_numbers(presentation_id)
+        return f"Added page numbers to {r['slides_numbered']}/{r['total_slides']} slides"
+    elif a == "get_thumbnail":
+        r = slides_service.get_slide_thumbnail(presentation_id, slide_id)
+        return f"Thumbnail ({r['width']}x{r['height']}):\n{r['url']}"
+    elif a == "insert_table_rows":
+        r = slides_service.insert_table_rows(presentation_id, table_id, row_index, count)
+        return f"Added {r['rows_added']} row(s)"
+    elif a == "delete_table_row":
+        r = slides_service.delete_table_row(presentation_id, table_id, row_index)
+        return f"Deleted row {r['row_deleted']}"
+    elif a == "merge_table_cells":
+        r = slides_service.merge_table_cells(presentation_id, table_id, row_index, col_index, row_span, col_span)
+        return f"Merged {r['merged']}"
+    elif a == "list_layouts":
+        layouts = slides_service.list_layouts(presentation_id)
+        lines = [f"Available layouts ({len(layouts)}):\n"]
+        for l in layouts:
+            phs = ", ".join(f"{p['type']}[{p['index']}]" for p in l["placeholders"])
+            lines.append(f"- **{l['name']}** `{l['layout_id']}`\n  Placeholders: {phs or 'none'}")
+        return "\n".join(lines)
+    elif a == "create_from_template":
+        r = slides_service.create_from_template(find, name, folder_id or None)
+        lines = [f"Created from template: **{r['title']}** (`{r['presentation_id']}`)\nURL: {r['url']}\n\nAvailable layouts:"]
+        for l in r["layouts"]:
+            phs = ", ".join(f"{p['type']}[{p['index']}]" for p in l["placeholders"])
+            lines.append(f"- **{l['name']}** `{l['layout_id']}` — {phs or 'none'}")
+        return "\n".join(lines)
+    else:
+        return f"ERROR: Unknown action '{action}'"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 6: ANALYZE (audit + recommend)
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+@_handle_errors
+def gslides_analyze(
+    presentation_id: str = "",
+    content_type: str = "",
+    text_length: int = 0,
+    audience: str = "business",
+) -> str:
+    """Analyze a presentation's style OR get recommendations for new slides.
+
+    MODE 1 — Audit (provide presentation_id):
+    Returns fonts, sizes, colors used, unstyled tables, issues found.
+    Use before gslides_edit to understand what needs fixing.
+
+    MODE 2 — Recommend (provide content_type):
+    Returns suggested font sizes, colors, spacing for a slide type.
+    Use before gslides_add_slide to get the right styling values.
+
+    Args:
+        presentation_id: Presentation to audit (mode 1)
+        content_type: Slide type to get recommendations for (mode 2): title, content, table, metrics, quote, code
+        text_length: Approximate body text length in characters (mode 2)
+        audience: Target audience — business, technical, academic, keynote (mode 2)
+    """
+    if presentation_id:
+        r = slides_service.audit_styles(presentation_id)
+        parts = [f"# Style Audit ({r['slides']} slides)\n"]
+        parts.append(f"## Fonts ({len(r['fonts'])})")
+        for f, c in r["fonts"].items(): parts.append(f"  - {f}: {c} runs")
+        parts.append(f"\n## Font Sizes ({len(r['font_sizes'])} distinct)")
+        for s, c in list(r["font_sizes"].items())[:10]: parts.append(f"  - {s}pt: {c}")
+        parts.append(f"\n## Colors ({len(r['text_colors'])})")
+        for c, n in r["text_colors"].items(): parts.append(f"  - {c}: {n}")
+        if r["tables"]:
+            parts.append(f"\n## Tables")
+            for t in r["tables"]:
+                styled = "styled" if t["has_styled_header"] else "UNSTYLED"
+                parts.append(f"  - Slide {t['slide']}: {t['rows']}x{t['columns']} ({styled}) `{t['object_id']}`")
+        parts.append(f"\n## Issues ({len(r['issues'])})")
+        for i in r["issues"]: parts.append(f"  - {i}")
+        return "\n".join(parts)
+
+    if content_type:
+        bases = {
+            "keynote": {"title": 36, "body": 24, "table_h": 20, "table_v": 18},
+            "business": {"title": 26, "body": 16, "table_h": 14, "table_v": 13},
+            "technical": {"title": 24, "body": 14, "table_h": 13, "table_v": 12},
+            "academic": {"title": 22, "body": 14, "table_h": 12, "table_v": 11},
+        }
+        b = bases.get(audience, bases["business"])
+        if text_length > 300: b["body"] = max(b["body"] - 2, 12)
+        elif text_length < 100: b["body"] = min(b["body"] + 2, 24)
+
+        return f"""## Recommended: {content_type} ({audience})
+**Fonts:** Heading: Montserrat, Body: Open Sans, Code: Roboto Mono
+**Title:** {b['title']}pt bold  |  **Body:** {b['body']}pt
+**Table:** header {b['table_h']}pt bold, values {b['table_v']}pt
+**Spacing:** line {130 if audience == 'business' else 120}%, bullet gap 6pt
+**Colors:** Light bg text: #202124. Dark bg text: #F5F5F7. Use set_theme or explicit colors."""
+
+    return "ERROR: Provide either presentation_id (audit) or content_type (recommend)"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 7: IMPORT (markdown, draw.io)
+# ═══════════════════════════════════════════════════════════════
+
+@mcp.tool()
+@_handle_errors
+def gslides_import(
+    presentation_id: str,
+    format: str,
+    content: str,
+    title: str = "",
+) -> str:
+    """Import content into a presentation.
+
+    FORMATS:
+    - "markdown" — # title, ## section, ### content, ``` code, > quote, | table
+    - "drawio" — draw.io mxGraph XML → native Slides shapes
+
+    Args:
+        presentation_id: The presentation ID
+        format: Import format — "markdown" or "drawio"
+        content: The content to import (markdown text or draw.io XML)
+        title: Optional title for draw.io import
+    """
+    if format.lower() == "markdown":
+        r = slides_service.from_markdown(presentation_id, content)
+        return f"Generated {r['slides_created']} slides from Markdown"
+    elif format.lower() == "drawio":
+        r = slides_service.import_drawio(presentation_id, content, title)
+        return f"Imported diagram: {r['shapes']} shapes, {r['connectors']} connectors (`{r['slide_id']}`)"
+    else:
+        return f"ERROR: Unknown format '{format}'. Use: markdown, drawio"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 8: SEARCH SHAPES
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gslides_search_shapes(query: str, max_results: int = 10) -> str:
-    """Search the curated draw.io shape library (58 presentation shapes).
-
-    Covers: basic shapes, flowchart, business/people, data/storage, arrows,
-    symbols, tech (server/laptop/router), and containers. Returns exact
-    draw.io style strings for use in mxCell elements with gslides_import_drawio.
+    """Search the curated shape library (58 shapes) for draw.io diagrams.
 
     Args:
-        query: Search keywords (e.g. "database", "server", "decision", "gear", "user")
-        max_results: Max results to return (default 10)
+        query: Keywords (e.g. "database", "server", "decision", "gear")
+        max_results: Max results
     """
     from .shape_search import search_shapes
     results = search_shapes(query, max_results)
     if not results:
         return f"No shapes found for: {query}"
-    lines = [f"Found {len(results)} shape(s) for \"{query}\":\n"]
+    lines = [f"Found {len(results)} shape(s):\n"]
     for r in results:
         lines.append(f"- **{r['title']}** ({r['width']}x{r['height']})")
         lines.append(f"  `{r['style'][:100]}{'...' if len(r['style']) > 100 else ''}`")
     return "\n".join(lines)
 
 
-@mcp.tool()
-@_handle_errors
-def gslides_import_drawio(
-    presentation_id: str,
-    drawio_xml: str,
-    title: str = "",
-) -> str:
-    """Import a draw.io diagram as native editable Google Slides shapes.
-
-    Generate mxGraph XML sized for a slide canvas of 1000x562 pixels (16:9).
-
-    CANVAS: 1000x562 px. GRID: x = col*160+40, y = row*100+40.
-    SHAPES: Rectangles 130x55, Diamonds 100x70, Cylinders 90x65.
-    CONTAINERS: swimlane;startSize=25 with children using relative coords.
-    EDGES: Always include <mxGeometry relative="1" as="geometry"/>.
-    Connectors auto-route to closest edges via RerouteLineRequest.
-
-    MODERN STYLE GUIDE (2025-2026):
-    Color palette (draw.io defaults — proven professional):
-      Blue:   fillColor=#dae8fc;strokeColor=#6c8ebf
-      Green:  fillColor=#d5e8d4;strokeColor=#82b366
-      Orange: fillColor=#ffe6cc;strokeColor=#d79b00
-      Yellow: fillColor=#fff2cc;strokeColor=#d6b656
-      Red:    fillColor=#f8cecc;strokeColor=#b85450
-      Purple: fillColor=#e1d5e7;strokeColor=#9673a6
-      Gray:   fillColor=#f5f5f5;strokeColor=#666666
-    For dark-fill shapes (headers/accents): fontColor=#FFFFFF
-    Shapes: rounded=1;whiteSpace=wrap;html=1;strokeWidth=1.5 on ALL shapes
-    Text: fontColor=#333333 (NEVER #000000), fontSize=8-10, titles=10-12
-    Connectors: thin (strokeWidth=1), color=#666666, curved preferred
-    Database: shape=cylinder3;boundedLbl=1;size=15
-    Containers: dashed=1;strokeWidth=2;fillColor=none;fontStyle=1
-    AVOID: sharp corners, saturated colors, thick borders, drop shadows, gradients
-    Use gslides_search_shapes for exact draw.io style strings
-
-    Also supports importing existing draw.io files (auto-scales to fit).
-
-    Args:
-        presentation_id: The presentation ID
-        drawio_xml: The draw.io mxGraph XML content
-        title: Optional slide title
-    """
-    result = slides_service.import_drawio(presentation_id, drawio_xml, title)
-    return f"Imported diagram: **{result['title'] or '(untitled)'}** — {result['shapes']} shapes, {result['connectors']} connectors (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_replace_text(presentation_id: str, find: str, replace: str) -> str:
-    """Find and replace text across all slides. Useful for template fill workflows.
-
-    Create a presentation with placeholders like {{company_name}}, then replace them.
-
-    Args:
-        presentation_id: The presentation ID
-        find: Text to search for (case-sensitive)
-        replace: Replacement text
-    """
-    result = slides_service.replace_text(presentation_id, find, replace)
-    return f"Replaced {result['occurrences_replaced']} occurrence(s) of `{find}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_replace_image(
-    presentation_id: str,
-    placeholder_text: str,
-    image_url: str,
-) -> str:
-    """Replace all shapes containing placeholder text with an image.
-
-    For template workflows: create shapes with text like {{logo}}, then replace with actual images.
-    The image takes the shape's size and position.
-
-    Args:
-        presentation_id: The presentation ID
-        placeholder_text: Text in shapes to replace (case-sensitive)
-        image_url: URL of the replacement image
-    """
-    result = slides_service.replace_image(presentation_id, placeholder_text, image_url)
-    return f"Replaced {result['occurrences_replaced']} shape(s) containing `{placeholder_text}` with image"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_set_speaker_notes(
-    presentation_id: str,
-    slide_id: str,
-    notes: str,
-) -> str:
-    """Set speaker notes on a slide.
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide object ID (from gslides_read)
-        notes: Speaker notes text
-    """
-    result = slides_service.set_speaker_notes(presentation_id, slide_id, notes)
-    return f"Set speaker notes on slide `{result['slide_id']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_duplicate_slide(presentation_id: str, slide_id: str) -> str:
-    """Duplicate (clone) a slide within the same presentation.
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide object ID to duplicate
-    """
-    result = slides_service.duplicate_slide(presentation_id, slide_id)
-    return f"Duplicated slide `{result['original']}` → `{result['duplicate']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_set_theme(
-    presentation_id: str,
-    theme: str,
-) -> str:
-    """Set the default color theme for a presentation. All subsequent slides inherit this
-    theme unless explicitly overridden. Available: modern (blue), corporate (navy), dark, warm.
-
-    Args:
-        presentation_id: The presentation ID
-        theme: Theme name — modern, corporate, dark, warm
-    """
-    result = slides_service.set_deck_theme(presentation_id, theme)
-    return f"Theme set to **{result['theme']}** for `{result['presentation_id']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_set_footer(
-    presentation_id: str,
-    footer: str,
-) -> str:
-    """Set footer text for a presentation (e.g. course name, company name).
-    Appears on all subsequent content slides (not title/section slides).
-
-    Args:
-        presentation_id: The presentation ID
-        footer: Footer text (e.g. "BSAI-101: Agents & LLMs")
-    """
-    result = slides_service.set_deck_footer(presentation_id, footer)
-    return f"Footer set: **{result['footer']}**"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_page_numbers(
-    presentation_id: str,
-) -> str:
-    """Add page numbers to all slides in an existing presentation.
-    Skips slides with colored backgrounds (section dividers, title slides).
-
-    Args:
-        presentation_id: The presentation ID
-    """
-    result = slides_service.add_page_numbers(presentation_id)
-    return f"Added page numbers to {result['slides_numbered']}/{result['total_slides']} slides"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_update_table_columns(
-    presentation_id: str,
-    table_id: str,
-    column_widths: list[float],
-) -> str:
-    """Set column widths for a table. Widths in inches.
-
-    Args:
-        presentation_id: The presentation ID
-        table_id: The table element object ID (from gslides_read)
-        column_widths: Width for each column in inches (e.g. [3.0, 2.0, 2.0])
-    """
-    result = slides_service.update_table_columns(presentation_id, table_id, column_widths)
-    return f"Set {result['columns']} column widths on table `{result['table_id']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_title_slide(
-    presentation_id: str,
-    title: str,
-    subtitle: str = "",
-    author: str = "",
-    theme: str = "modern",
-) -> str:
-    """Add a professional title slide with centered title, subtitle, and author.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Main title text
-        subtitle: Optional subtitle
-        author: Optional author/date line
-        theme: Color theme — modern, corporate, dark, warm
-    """
-    result = slides_service.add_title_slide(presentation_id, title, subtitle, author, theme)
-    return f"Added title slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_section_slide(
-    presentation_id: str,
-    title: str,
-    section_number: str = "",
-    theme: str = "modern",
-) -> str:
-    """Add a section divider slide with accent-colored background.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Section title
-        section_number: Optional section number (e.g. "01", "Part 2")
-        theme: Color theme — modern, corporate, dark, warm
-    """
-    result = slides_service.add_section_slide(presentation_id, title, section_number, theme)
-    return f"Added section slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_content_slide(
-    presentation_id: str,
-    title: str,
-    body: str,
-    speaker_notes: str = "",
-    theme: str | None = None,
-) -> str:
-    """Add a content slide with professional typography (Montserrat title, Open Sans body).
-
-    Multi-line body automatically becomes a bullet list. Uses the design system
-    with proper font sizes, spacing, and colors.
-
-    CONTENT RULES (McKinsey/BCG standard):
-    - Title should be the TAKEAWAY, not a topic label ("Revenue grew 15%" not "Revenue Analysis")
-    - Maximum 6 bullet points per slide
-    - Maximum 8 words per bullet
-    - Maximum 40 words total on the slide body
-    - One idea per slide — if you have two ideas, make two slides
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title (should state the key takeaway, not just a topic)
-        body: Body text (each line becomes a bullet if multi-line)
-        speaker_notes: Optional speaker notes
-        theme: Color theme (uses deck theme if set via gslides_set_theme)
-    """
-    result = slides_service.add_content_slide(presentation_id, title, body, speaker_notes, theme)
-    return f"Added content slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_two_column_slide(
-    presentation_id: str,
-    title: str,
-    col1: str,
-    col2: str,
-    col1_title: str = "",
-    col2_title: str = "",
-    theme: str = "modern",
-) -> str:
-    """Add a two-column content slide with proper gutter spacing.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        col1: Left column text (multi-line for bullets)
-        col2: Right column text
-        col1_title: Optional left column heading
-        col2_title: Optional right column heading
-        theme: Color theme
-    """
-    result = slides_service.add_two_column_slide(
-        presentation_id, title, col1, col2, col1_title, col2_title, theme)
-    return f"Added two-column slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_image_text_slide(
-    presentation_id: str,
-    title: str,
-    image_url: str,
-    text: str,
-    image_side: str = "left",
-    theme: str = "modern",
-) -> str:
-    """Add a slide with image on one side and text on the other.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        image_url: Public image URL
-        text: Text content (multi-line supported)
-        image_side: "left" or "right" — where to place the image
-        theme: Color theme
-    """
-    result = slides_service.add_image_text_slide(
-        presentation_id, title, image_url, text, image_side, theme)
-    return f"Added image+text slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_quote_slide(
-    presentation_id: str,
-    quote: str,
-    attribution: str = "",
-    theme: str = "modern",
-) -> str:
-    """Add a quote slide with accent bar and attribution.
-
-    Args:
-        presentation_id: The presentation ID
-        quote: Quote text (don't include quotation marks — they're added automatically)
-        attribution: Who said it (e.g. "Steve Jobs")
-        theme: Color theme
-    """
-    result = slides_service.add_quote_slide(presentation_id, quote, attribution, theme)
-    return f"Added quote slide (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_metrics_slide(
-    presentation_id: str,
-    title: str,
-    metrics: list[dict],
-    theme: str = "modern",
-) -> str:
-    """Add a big-numbers metrics slide (2-4 key metrics displayed prominently).
-
-    metrics: list of objects with "value" and "label" keys.
-    Example: [{"value": "98.5%", "label": "Uptime"}, {"value": "4.2M", "label": "Users"}]
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        metrics: List of metric objects (max 4) with "value" and "label"
-        theme: Color theme
-    """
-    result = slides_service.add_metrics_slide(presentation_id, title, metrics, theme)
-    return f"Added metrics slide: **{result['title']}** ({result['metrics_count']} metrics) (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_styled_table(
-    presentation_id: str,
-    title: str,
-    headers: list[str],
-    rows: list[list[str]],
-    theme: str = "modern",
-) -> str:
-    """Add a professionally styled table slide — colored header, alternating rows, borders.
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        headers: Column headers
-        rows: Data rows
-        theme: Color theme — modern (blue), corporate (navy), dark, warm
-    """
-    result = slides_service.add_styled_table_slide(presentation_id, title, headers, rows, theme)
-    return f"Added styled table: **{result['title']}** ({result['table']}) (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_code_slide(
-    presentation_id: str,
-    title: str,
-    code: str,
-    language: str = "",
-    theme: str = "modern",
-) -> str:
-    """Add a slide with a styled code block (dark background, mono font).
-
-    Args:
-        presentation_id: The presentation ID
-        title: Slide title
-        code: Code content (multi-line)
-        language: Optional language label (e.g. "python", "bash")
-        theme: Color theme
-    """
-    result = slides_service.add_code_slide(presentation_id, title, code, language, theme)
-    return f"Added code slide: **{result['title']}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_add_chart_slide(
-    presentation_id: str,
-    spreadsheet_id: str,
-    chart_id: int,
-    title: str = "",
-    linked: bool = True,
-) -> str:
-    """Embed a live Google Sheets chart onto a slide.
-
-    The chart_id is returned by gsheets_add_chart. If linked=true, the chart
-    updates automatically when the spreadsheet data changes.
-
-    Args:
-        presentation_id: The presentation ID
-        spreadsheet_id: The source spreadsheet ID
-        chart_id: The chart ID (from gsheets_add_chart)
-        title: Optional slide title
-        linked: Keep chart linked to source data (default true)
-    """
-    result = slides_service.add_chart_slide(presentation_id, spreadsheet_id, chart_id, title, linked)
-    return f"Added chart slide: **{result['title'] or '(chart)'}** (`{result['slide_id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_set_background(
-    presentation_id: str,
-    slide_id: str,
-    color: str | None = None,
-    image_url: str | None = None,
-) -> str:
-    """Set a slide's background to a solid color or image.
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide object ID
-        color: Background color hex (e.g. "#1A1A1A")
-        image_url: Background image URL (overrides color)
-    """
-    result = slides_service.set_slide_background(presentation_id, slide_id, color, image_url)
-    return f"Set {result['background']} background on slide `{result['slide_id']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_update_element(
-    presentation_id: str,
-    element_id: str,
-    x: float | None = None,
-    y: float | None = None,
-    width: float | None = None,
-    height: float | None = None,
-) -> str:
-    """Move or resize any element on a slide. Dimensions in inches.
-
-    Args:
-        presentation_id: The presentation ID
-        element_id: The element object ID (from gslides_read)
-        x: New x position in inches (from left)
-        y: New y position in inches (from top)
-        width: New width in inches
-        height: New height in inches
-    """
-    result = slides_service.update_element(presentation_id, element_id, x, y, width, height)
-    return f"Updated element `{result['element_id']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_z_order(
-    presentation_id: str,
-    element_ids: list[str],
-    operation: str = "BRING_TO_FRONT",
-) -> str:
-    """Change z-order of elements (layering).
-
-    Args:
-        presentation_id: The presentation ID
-        element_ids: List of element object IDs
-        operation: BRING_TO_FRONT, SEND_TO_BACK, BRING_FORWARD, SEND_BACKWARD
-    """
-    result = slides_service.z_order(presentation_id, element_ids, operation)
-    return f"{result['operation']} applied to {len(result['elements'])} element(s)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_group(
-    presentation_id: str,
-    element_ids: list[str],
-) -> str:
-    """Group multiple elements together.
-
-    Args:
-        presentation_id: The presentation ID
-        element_ids: List of element object IDs to group (min 2)
-    """
-    result = slides_service.group_elements(presentation_id, element_ids)
-    return f"Grouped {len(result['children'])} elements → `{result['group_id']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_ungroup(
-    presentation_id: str,
-    group_ids: list[str],
-) -> str:
-    """Ungroup previously grouped elements.
-
-    Args:
-        presentation_id: The presentation ID
-        group_ids: List of group object IDs to ungroup
-    """
-    result = slides_service.ungroup_elements(presentation_id, group_ids)
-    return f"Ungrouped {len(result['ungrouped'])} group(s)"
-
-
-@mcp.tool()
-@_handle_errors
-def gslides_get_thumbnail(
-    presentation_id: str,
-    slide_id: str,
-    size: str = "LARGE",
-) -> str:
-    """Get a temporary PNG thumbnail URL for a slide (expires in ~30 minutes).
-
-    Args:
-        presentation_id: The presentation ID
-        slide_id: The slide object ID (from gslides_read)
-        size: LARGE (1600px), MEDIUM (800px), or SMALL (200px)
-    """
-    result = slides_service.get_slide_thumbnail(presentation_id, slide_id, size)
-    return f"Thumbnail ({result['width']}x{result['height']}):\n{result['url']}\n\n(Expires in ~30 minutes)"
-
-
-# ── Google Drive Tools (shared) ────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════
+# DRIVE TOOLS (shared)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
@@ -890,11 +634,10 @@ def gdrive_search(query: str, max_results: int = 20) -> str:
 
     Args:
         query: Search query
-        max_results: Maximum results (default 20)
+        max_results: Maximum results
     """
     results = drive_service.search_files(query, max_results=max_results)
-    if not results:
-        return f"No files found for: {query}"
+    if not results: return f"No files found for: {query}"
     lines = [f"Found {len(results)} file(s):\n"]
     for f in results:
         lines.append(f"- **{f['name']}** (`{f['id']}`)\n  {f['mime_type']} | {f['modified']}\n  {f['url']}")
@@ -904,17 +647,15 @@ def gdrive_search(query: str, max_results: int = 20) -> str:
 @mcp.tool()
 @_handle_errors
 def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> str:
-    """List files in a Google Drive folder.
+    """List files in a Drive folder.
 
     Args:
         folder_id: Folder ID (omit for root)
-        max_results: Maximum results (default 50)
+        max_results: Maximum results
     """
     results = drive_service.list_folder(folder_id=folder_id, max_results=max_results)
-    if not results:
-        return "Folder is empty"
-    label = f"folder `{folder_id}`" if folder_id else "My Drive"
-    lines = [f"Contents of {label} ({len(results)} items):\n"]
+    if not results: return "Folder is empty"
+    lines = [f"Contents ({len(results)} items):\n"]
     for f in results:
         lines.append(f"- **{f['name']}** (`{f['id']}`)\n  {f['mime_type']} | {f['modified']}")
     return "\n".join(lines)
@@ -922,101 +663,80 @@ def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> s
 
 @mcp.tool()
 @_handle_errors
-def gdrive_move(file_id: str, folder_id: str) -> str:
-    """Move a file to a different Drive folder.
-
-    Args:
-        file_id: The file ID
-        folder_id: Target folder ID
-    """
-    result = drive_service.move_file(file_id, folder_id)
-    return f"Moved **{result['name']}** to folder `{folder_id}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_delete(file_id: str, confirm: bool = False) -> str:
-    """DESTRUCTIVE: Move a file to trash (recoverable 30 days). Requires confirm=true.
-
-    Args:
-        file_id: The file ID to delete
-        confirm: Must be true to proceed
-    """
-    if not confirm:
-        return "REFUSED: confirm must be true. Ask the user first."
-    result = drive_service.trash_file(file_id)
-    return f"Trashed **{result['name']}** (`{result['id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_upload(local_path: str, folder_id: str | None = None, name: str | None = None) -> str:
-    """Upload a local file to Google Drive.
-
-    Args:
-        local_path: Path to the local file
-        folder_id: Optional target folder ID
-        name: Optional name override
-    """
-    result = drive_service.upload_file(local_path, name, folder_id)
-    return f"Uploaded **{result['name']}** (`{result['id']}`)\n- Type: {result['mime_type']}\n- URL: {result['url']}"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_export(
-    file_id: str,
+def gdrive_ops(
+    action: str,
+    file_id: str = "",
+    folder_id: str = "",
+    local_path: str = "",
+    name: str = "",
     format: str = "pdf",
-    output_path: str | None = None,
-) -> str:
-    """Export a Google Workspace file to a local format. Max 10MB.
-
-    Args:
-        file_id: The Google Workspace file ID
-        format: Export format (pdf, docx, xlsx, pptx, csv, txt, png, jpg, svg)
-        output_path: Optional output path
-    """
-    result = drive_service.export_file(file_id, format, output_path)
-    size_kb = result["size"] / 1024
-    return f"Exported to **{result['path']}** ({size_kb:.1f} KB)"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_copy(file_id: str, name: str | None = None, folder_id: str | None = None) -> str:
-    """Copy a file (for template workflows).
-
-    Args:
-        file_id: The file ID to copy
-        name: Optional name for the copy
-        folder_id: Optional folder for the copy
-    """
-    result = drive_service.copy_file(file_id, name, folder_id)
-    return f"Copied to **{result['name']}** (`{result['id']}`)\n- URL: {result['url']}"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_share(
-    file_id: str,
-    email: str | None = None,
+    output_path: str = "",
+    email: str = "",
     role: str = "reader",
     anyone: bool = False,
+    confirm: bool = False,
 ) -> str:
-    """Share a file with a user or make it public.
+    """Google Drive file operations.
+
+    ACTIONS:
+    - "move" — move file (uses: file_id, folder_id)
+    - "delete" — trash file (uses: file_id, confirm=true)
+    - "rename" — rename file (uses: file_id, name)
+    - "copy" — copy file (uses: file_id, name, folder_id)
+    - "upload" — upload local file (uses: local_path, folder_id, name)
+    - "export" — export as PDF/DOCX/etc (uses: file_id, format, output_path)
+    - "share" — share file (uses: file_id, email, role, anyone)
+    - "info" — get file metadata (uses: file_id)
+    - "create_folder" — create folder (uses: name, folder_id as parent)
 
     Args:
-        file_id: The file ID
-        email: Email to share with (omit if anyone=true)
-        role: Permission level (reader, writer, commenter)
-        anyone: Make public (anyone with link)
+        action: Operation
+        file_id: Target file ID
+        folder_id: Target folder ID
+        local_path: Local file path (upload)
+        name: File/folder name
+        format: Export format (pdf, docx, xlsx, pptx, csv, txt, png)
+        output_path: Export output path
+        email: Email for sharing
+        role: Permission role (reader/writer/commenter)
+        anyone: Make public
+        confirm: Confirm deletion
     """
-    result = drive_service.share_file(file_id, email, role, anyone)
-    return f"Shared with {result['shared_with']} as {result['role']}\n- URL: {result['url']}"
+    a = action.lower()
+
+    if a == "move":
+        r = drive_service.move_file(file_id, folder_id)
+        return f"Moved **{r['name']}** to `{folder_id}`"
+    elif a == "delete":
+        if not confirm: return "REFUSED: set confirm=true"
+        r = drive_service.trash_file(file_id)
+        return f"Trashed **{r['name']}**"
+    elif a == "rename":
+        r = drive_service.rename_file(file_id, name)
+        return f"Renamed → **{r['name']}**"
+    elif a == "copy":
+        r = drive_service.copy_file(file_id, name, folder_id or None)
+        return f"Copied → **{r['name']}** (`{r['id']}`)"
+    elif a == "upload":
+        r = drive_service.upload_file(local_path, name or None, folder_id or None)
+        return f"Uploaded **{r['name']}** (`{r['id']}`)"
+    elif a == "export":
+        r = drive_service.export_file(file_id, format, output_path or None)
+        return f"Exported → **{r['path']}** ({r['size']/1024:.1f} KB)"
+    elif a == "share":
+        r = drive_service.share_file(file_id, email or None, role, anyone)
+        return f"Shared with {r['shared_with']} as {r['role']}\nURL: {r['url']}"
+    elif a == "info":
+        r = drive_service.get_file_info(file_id)
+        return f"**{r['name']}**\nType: {r['mime_type']}\nOwner: {', '.join(r['owners'])}\nShared: {r['shared']}\nURL: {r['url']}"
+    elif a == "create_folder":
+        r = drive_service.create_folder(name, folder_id or None)
+        return f"Created **{r['name']}** (`{r['id']}`)"
+    else:
+        return f"ERROR: Unknown action '{action}'"
 
 
-# ── Entry Point ────────────────────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "auth":
