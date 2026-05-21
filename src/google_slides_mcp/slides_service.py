@@ -121,11 +121,9 @@ def _get_slide_count(service, presentation_id: str) -> int:
     return len(pres.get("slides", []))
 
 
-def _polish_reqs(slide_id: str, pal: dict, presentation_id: str, service, accent_line: bool = True) -> list[dict]:
-    """Add accent line + page number + footer to a content slide."""
+def _polish_reqs(slide_id: str, pal: dict, presentation_id: str, service) -> list[dict]:
+    """Add page number + footer to a content slide."""
     reqs = []
-    if accent_line:
-        reqs.extend(_title_accent_reqs(slide_id, pal))
     slide_num = _get_slide_count(service, presentation_id) + 1
     reqs.extend(_page_number_reqs(slide_id, pal, slide_num))
     reqs.extend(_footer_reqs(slide_id, pal, presentation_id))
