@@ -199,6 +199,20 @@ def drawio_xml_to_slides_requests(
 
     if not vertices: return [], {}
 
+    # Detect labeled containers — shapes whose label overlaps children
+    _container_ids: set[str] = set()
+    for v in vertices:
+        if not v["label"]:
+            continue
+        for other in vertices:
+            if other["id"] == v["id"]:
+                continue
+            if (other["x"] >= v["x"] and other["y"] >= v["y"] and
+                other["x"] + other["w"] <= v["x"] + v["w"] and
+                other["y"] + other["h"] <= v["y"] + v["h"]):
+                _container_ids.add(v["id"])
+                break
+
     # Bounding box
     min_x = min(v["x"] for v in vertices)
     min_y = min(v["y"] for v in vertices)
@@ -210,7 +224,7 @@ def drawio_xml_to_slides_requests(
 
     # SINGLE SCALE FACTOR — fit diagram to slide with margin
     margin = 0.3
-    title_offset = 0.7 if title else 0.0
+    title_offset = 1.1 if title else 0.0
     usable_w = SLIDE_W_IN - 2 * margin
     usable_h = SLIDE_H_IN - 2 * margin - title_offset
     scale = min(usable_w / dw, usable_h / dh)
@@ -240,7 +254,7 @@ def drawio_xml_to_slides_requests(
         num_lines = label.count("\n") + 1
         if max_line == 0: return original_pt
         # Width constraint: font_pt ≈ shape_width / (chars * 0.55)
-        fw = (shape_w_in * 72) / (max_line * 0.55) if max_line > 0 else 20
+        fw = (shape_w_in * 72) / (max_line * 0.65) if max_line > 0 else 20
         # Height constraint: font_pt ≈ shape_height / (lines * 1.3)
         fh = (shape_h_in * 72) / (num_lines * 1.3) if num_lines > 0 else 20
         return max(2, min(int(min(fw, fh)), 14))
@@ -285,9 +299,18 @@ def drawio_xml_to_slides_requests(
             }
         })
 
-        # Shape properties
-        props: dict = {"contentAlignment": "MIDDLE"}
-        flds = ["contentAlignment"]
+        # Vertical alignment: honor draw.io style, auto-detect labeled containers
+        va = st.get("verticalAlign", "middle")
+        v_align = {"top": "TOP", "bottom": "BOTTOM"}.get(va, "MIDDLE")
+        if v["id"] in _container_ids:
+            v_align = "TOP"
+
+        # Shape properties — TEXT_AUTOFIT shrinks text to fit the shape
+        props: dict = {
+            "contentAlignment": v_align,
+            "autofit": {"autofitType": "TEXT_AUTOFIT"},
+        }
+        flds = ["contentAlignment", "autofit.autofitType"]
 
         if is_container or fill in ("#FFFFFF", "#ffffff"):
             props["shapeBackgroundFill"] = {"propertyState": "NOT_RENDERED"}
