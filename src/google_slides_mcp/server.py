@@ -25,7 +25,7 @@ WORKFLOW FOR BUILDING A DECK:
 2. gslides_create or gslides_manage(action="create_from_template") for branded decks
 3. gslides_manage(action="set_theme") to set color palette BEFORE adding slides
 4. gslides_add_slide — one idea per slide, takeaway titles
-5. For visual diagrams: gslides_import(format="drawio") — NOT add_slide
+5. For visual diagrams: gslides_import(format="drawio") — the ONLY way to create diagrams
 6. gslides_analyze(presentation_id=...) to audit — fix issues found
 7. gslides_manage(action="add_page_numbers") last
 
@@ -45,7 +45,7 @@ DESIGN RULES (always follow):
 - At least 40% whitespace per slide. If it looks full, split it.
 - NEVER below 12pt for visible text. 9pt only for page numbers.
 - If user doesn't specify colors, inherit from deck theme. Don't invent new colors.
-- For visual diagrams (flows, architectures), use draw.io XML import — NOT shapes.
+- For visual diagrams (flows, architectures), ALWAYS use gslides_import(format="drawio").
 """,
 )
 
