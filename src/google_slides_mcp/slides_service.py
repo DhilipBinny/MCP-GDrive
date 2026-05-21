@@ -1720,7 +1720,7 @@ def normalize_fonts(
 
 
 def audit_styles(presentation_id: str) -> dict:
-    """Analyze a deck and report style inconsistencies for LLM-driven fixes."""
+    """Analyze a deck and report style + layout inconsistencies for LLM-driven fixes."""
     service = _get_service()
     pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
 
@@ -1730,16 +1730,51 @@ def audit_styles(presentation_id: str) -> dict:
     tables = []
     slide_count = len(pres.get("slides", []))
 
+    title_positions = []
+    slides_without_title = []
+    empty_slides = []
+    title_fonts = {}
+    title_sizes = {}
+    page_num_slides = set()
+    footer_slides = set()
+
     for s_idx, slide in enumerate(pres.get("slides", [])):
+        slide_num = s_idx + 1
+        has_title = False
+        has_content = False
+        has_page_num = False
+        has_footer = False
+
         for elem in slide.get("pageElements", []):
             obj_id = elem["objectId"]
             shape = elem.get("shape", {})
             table = elem.get("table", {})
+            transform = elem.get("transform", {})
+
+            is_placeholder = shape.get("placeholder", {}).get("type", "")
+            if is_placeholder == "TITLE" or is_placeholder == "CENTERED_TITLE":
+                has_title = True
+                tx = transform.get("translateX", 0)
+                ty = transform.get("translateY", 0)
+                title_positions.append({"slide": slide_num, "x": tx, "y": ty, "id": obj_id})
+                for te in shape.get("text", {}).get("textElements", []):
+                    tr = te.get("textRun", {})
+                    if not tr or not tr.get("content", "").strip():
+                        continue
+                    ts = tr.get("style", {})
+                    tf = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
+                    if tf:
+                        title_fonts[tf] = title_fonts.get(tf, 0) + 1
+                    tfs = ts.get("fontSize", {}).get("magnitude")
+                    if tfs:
+                        title_sizes[tfs] = title_sizes.get(tfs, 0) + 1
 
             for te in shape.get("text", {}).get("textElements", []):
                 tr = te.get("textRun", {})
-                if not tr or not tr.get("content", "").strip():
+                content = tr.get("content", "").strip() if tr else ""
+                if not content:
                     continue
+                has_content = True
                 ts = tr.get("style", {})
                 ff = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
                 if ff:
@@ -1747,13 +1782,18 @@ def audit_styles(presentation_id: str) -> dict:
                 fs = ts.get("fontSize", {}).get("magnitude")
                 if fs:
                     sizes[fs] = sizes.get(fs, 0) + 1
+                    if fs <= 9 and len(content) <= 4 and content.isdigit():
+                        has_page_num = True
                 fg = ts.get("foregroundColor", {}).get("opaqueColor", {}).get("rgbColor", {})
                 if fg:
                     r, g, b = fg.get("red", 0), fg.get("green", 0), fg.get("blue", 0)
                     hex_c = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
                     colors[hex_c] = colors.get(hex_c, 0) + 1
+                if "©" in content or "bsigma" in content.lower() or "footer" in content.lower():
+                    has_footer = True
 
             if table:
+                has_content = True
                 has_header_bg = False
                 first_row = table.get("tableRows", [{}])[0] if table.get("tableRows") else {}
                 for cell in first_row.get("tableCells", []):
@@ -1762,14 +1802,24 @@ def audit_styles(presentation_id: str) -> dict:
                         has_header_bg = True
                         break
                 tables.append({
-                    "slide": s_idx + 1,
+                    "slide": slide_num,
                     "object_id": obj_id,
                     "rows": table.get("rows", 0),
                     "columns": table.get("columns", 0),
                     "has_styled_header": has_header_bg,
                 })
 
+        if not has_title and has_content and slide_num > 1:
+            slides_without_title.append(slide_num)
+        if not has_content and slide_num > 1:
+            empty_slides.append(slide_num)
+        if has_page_num:
+            page_num_slides.add(slide_num)
+        if has_footer:
+            footer_slides.add(slide_num)
+
     issues = []
+
     if len(fonts) > 2:
         issues.append(f"Too many fonts ({len(fonts)}): {', '.join(sorted(fonts, key=fonts.get, reverse=True))}")
     if len(sizes) > 6:
@@ -1781,7 +1831,33 @@ def audit_styles(presentation_id: str) -> dict:
             issues.append(f"Slide {t['slide']}: table ({t['rows']}x{t['columns']}) has no styled header — object_id: {t['object_id']}")
     smallest = min(sizes.keys()) if sizes else 0
     if smallest and smallest < 9:
-        issues.append(f"Smallest font is {smallest}pt — may be unreadable")
+        issues.append(f"Smallest font is {int(smallest)}pt — may be unreadable")
+
+    if len(title_fonts) > 1:
+        issues.append(f"Title font inconsistency: {', '.join(f'{f} ({c}x)' for f, c in sorted(title_fonts.items(), key=lambda x: -x[1]))}")
+    if len(title_sizes) > 2:
+        issues.append(f"Title size inconsistency: {', '.join(f'{int(s)}pt ({c}x)' for s, c in sorted(title_sizes.items(), key=lambda x: -x[1]))}")
+
+    if title_positions:
+        y_values = [tp["y"] for tp in title_positions]
+        unique_y = set(int(y / 10000) for y in y_values)
+        if len(unique_y) > 2:
+            issues.append(f"Title Y-position varies across {len(unique_y)} positions — breaks flip test")
+
+    if slides_without_title:
+        if len(slides_without_title) <= 5:
+            issues.append(f"Slides without title: {', '.join(str(s) for s in slides_without_title)}")
+        else:
+            issues.append(f"{len(slides_without_title)} slides without title (first 5: {', '.join(str(s) for s in slides_without_title[:5])})")
+
+    if empty_slides:
+        issues.append(f"Empty slides: {', '.join(str(s) for s in empty_slides)}")
+
+    missing_pn = [s for s in range(1, slide_count + 1) if s not in page_num_slides]
+    content_missing_footer = []
+    for s in range(2, slide_count + 1):
+        if s not in footer_slides and s in page_num_slides:
+            content_missing_footer.append(s)
 
     return {
         "slides": slide_count,
@@ -1789,6 +1865,15 @@ def audit_styles(presentation_id: str) -> dict:
         "font_sizes": dict(sorted(sizes.items(), key=lambda x: -x[1])),
         "text_colors": dict(sorted(colors.items(), key=lambda x: -x[1])[:8]),
         "tables": tables,
+        "layout": {
+            "titles_found": len(title_positions),
+            "slides_without_title": slides_without_title,
+            "empty_slides": empty_slides,
+            "title_fonts": title_fonts,
+            "title_sizes": {f"{int(k)}pt": v for k, v in title_sizes.items()},
+            "page_numbers_on": len(page_num_slides),
+            "footers_on": len(footer_slides),
+        },
         "issues": issues,
     }
 
