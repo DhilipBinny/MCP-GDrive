@@ -2059,6 +2059,224 @@ def delete_element(presentation_id: str, element_id: str) -> dict:
     return {"deleted": element_id}
 
 
+def align_elements(
+    presentation_id: str, slide_id: str,
+    mode: str = "auto",
+) -> dict:
+    """Align and distribute elements on a slide.
+
+    Modes:
+      "auto" — detect rows/columns, snap Y within rows, distribute X evenly
+      "align_left" / "align_center" / "align_right" — horizontal alignment
+      "align_top" / "align_middle" / "align_bottom" — vertical alignment
+      "distribute_h" — equal horizontal spacing
+      "distribute_v" — equal vertical spacing
+    """
+    from .design import CANVAS_H, CANVAS_W
+    service = _get_service()
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+
+    slide = None
+    for s in pres.get("slides", []):
+        if s["objectId"] == slide_id:
+            slide = s
+            break
+    if not slide:
+        return {"error": f"Slide {slide_id} not found"}
+
+    elements = []
+    for elem in slide.get("pageElements", []):
+        t = elem.get("transform", {})
+        s = elem.get("size", {})
+        sx = t.get("scaleX", 1)
+        sy = t.get("scaleY", 1)
+        w = s.get("width", {}).get("magnitude", 0) * abs(sx)
+        h = s.get("height", {}).get("magnitude", 0) * abs(sy)
+        x = t.get("translateX", 0)
+        y = t.get("translateY", 0)
+        if w < 50000 or h < 50000:
+            continue
+        elements.append({
+            "id": elem["objectId"], "x": x, "y": y, "w": w, "h": h,
+            "cx": x + w / 2, "cy": y + h / 2,
+            "transform": t,
+        })
+
+    if len(elements) < 2:
+        return {"aligned": 0, "reason": "Need at least 2 elements"}
+
+    reqs: list[dict] = []
+    adjusted = 0
+
+    if mode == "auto":
+        row_tolerance = CANVAS_H * 0.04
+        rows: dict[int, list] = {}
+        for e in elements:
+            bucket = int(e["cy"] / row_tolerance)
+            rows.setdefault(bucket, []).append(e)
+
+        for bucket, row_elems in rows.items():
+            if len(row_elems) < 2:
+                continue
+            median_y = sorted(e["y"] for e in row_elems)[len(row_elems) // 2]
+            for e in row_elems:
+                if abs(e["y"] - median_y) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateY"] = median_y
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+
+            row_elems.sort(key=lambda e: e["x"])
+            if len(row_elems) >= 3:
+                left = row_elems[0]["x"]
+                right = row_elems[-1]["x"] + row_elems[-1]["w"]
+                total_elem_w = sum(e["w"] for e in row_elems)
+                total_gap = (right - left) - total_elem_w
+                if total_gap > 0:
+                    gap = total_gap / (len(row_elems) - 1)
+                    cx = left
+                    for e in row_elems:
+                        if abs(e["x"] - cx) > 5000:
+                            new_t = dict(e["transform"])
+                            new_t["translateX"] = cx
+                            reqs.append({"updatePageElementTransform": {
+                                "objectId": e["id"],
+                                "transform": {**new_t, "unit": "EMU"},
+                                "applyMode": "ABSOLUTE",
+                            }})
+                            adjusted += 1
+                        cx += e["w"] + gap
+
+    elif mode.startswith("align_"):
+        direction = mode.split("_", 1)[1]
+        if direction == "left":
+            target = min(e["x"] for e in elements)
+            for e in elements:
+                if abs(e["x"] - target) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateX"] = target
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+        elif direction == "center":
+            target_cx = sum(e["cx"] for e in elements) / len(elements)
+            for e in elements:
+                new_x = target_cx - e["w"] / 2
+                if abs(e["x"] - new_x) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateX"] = new_x
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+        elif direction == "right":
+            target_r = max(e["x"] + e["w"] for e in elements)
+            for e in elements:
+                new_x = target_r - e["w"]
+                if abs(e["x"] - new_x) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateX"] = new_x
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+        elif direction == "top":
+            target = min(e["y"] for e in elements)
+            for e in elements:
+                if abs(e["y"] - target) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateY"] = target
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+        elif direction == "middle":
+            target_cy = sum(e["cy"] for e in elements) / len(elements)
+            for e in elements:
+                new_y = target_cy - e["h"] / 2
+                if abs(e["y"] - new_y) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateY"] = new_y
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+        elif direction == "bottom":
+            target_b = max(e["y"] + e["h"] for e in elements)
+            for e in elements:
+                new_y = target_b - e["h"]
+                if abs(e["y"] - new_y) > 1000:
+                    new_t = dict(e["transform"])
+                    new_t["translateY"] = new_y
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+
+    elif mode == "distribute_h":
+        elements.sort(key=lambda e: e["x"])
+        if len(elements) >= 3:
+            left = elements[0]["x"]
+            right = elements[-1]["x"] + elements[-1]["w"]
+            total_w = sum(e["w"] for e in elements)
+            gap = ((right - left) - total_w) / (len(elements) - 1)
+            cx = left
+            for e in elements:
+                if abs(e["x"] - cx) > 5000:
+                    new_t = dict(e["transform"])
+                    new_t["translateX"] = cx
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+                cx += e["w"] + gap
+
+    elif mode == "distribute_v":
+        elements.sort(key=lambda e: e["y"])
+        if len(elements) >= 3:
+            top = elements[0]["y"]
+            bottom = elements[-1]["y"] + elements[-1]["h"]
+            total_h = sum(e["h"] for e in elements)
+            gap = ((bottom - top) - total_h) / (len(elements) - 1)
+            cy = top
+            for e in elements:
+                if abs(e["y"] - cy) > 5000:
+                    new_t = dict(e["transform"])
+                    new_t["translateY"] = cy
+                    reqs.append({"updatePageElementTransform": {
+                        "objectId": e["id"],
+                        "transform": {**new_t, "unit": "EMU"},
+                        "applyMode": "ABSOLUTE",
+                    }})
+                    adjusted += 1
+                cy += e["h"] + gap
+
+    if reqs:
+        execute_with_retry(service.presentations().batchUpdate(
+            presentationId=presentation_id, body={"requests": reqs}))
+
+    return {"aligned": adjusted, "mode": mode, "total_elements": len(elements)}
+
+
 def get_image_url(presentation_id: str, element_id: str) -> dict:
     """Extract the image URL from an image element or shape with image fill."""
     service = _get_service()
