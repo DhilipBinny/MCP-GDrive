@@ -1,4 +1,4 @@
-"""Google Sheets MCP Server — read, write, format, and manage spreadsheets."""
+"""Google Sheets MCP Server — consolidated tools for create, read, write, format, and manage spreadsheets."""
 
 from __future__ import annotations
 
@@ -17,7 +17,40 @@ from shared import drive_service
 
 mcp = FastMCP(
     "google-sheets-mcp",
-    instructions="MCP server for Google Sheets — read, write, format, and manage spreadsheets",
+    instructions="""MCP server for Google Sheets — create, read, write, format, and manage spreadsheets.
+
+WORKFLOW FOR CREATING A SPREADSHEET:
+1. gsheets_create — create the spreadsheet with named tabs
+2. gsheets_write(action="write") — populate headers and data
+3. gsheets_format(action="style") — bold headers, colors, number formats
+4. gsheets_manage(action="freeze") — freeze header row + auto-resize columns
+5. gsheets_format(action="borders") — add borders to data range
+6. gsheets_manage(action="add_chart") — visualize the data
+
+WORKFLOW FOR EDITING EXISTING SHEETS:
+1. gsheets_read(action="info") — see tabs, row counts, chart IDs
+2. gsheets_read(action="read") — read the data as markdown table
+3. gsheets_read(action="find") — locate specific cells
+4. gsheets_write/gsheets_format — make changes
+
+DATA FORMATTING BEST PRACTICES:
+- Always freeze row 1 (headers) after writing data.
+- Bold + background color on header row for scannability.
+- Use number_format for currencies ($#,##0.00), percentages (0.00%), dates (yyyy-MM-dd).
+- Add borders="outer" on the full data range for clean boundaries.
+- Conditional formatting for KPIs: green for good, red for bad.
+- Auto-resize columns after writing to fit content.
+
+CHART TYPE SELECTION GUIDE:
+- LINE — trends over time (sales by month)
+- COLUMN — comparing categories (revenue by region)
+- BAR — horizontal comparison, long labels
+- PIE/DONUT — parts of a whole (max 6 slices)
+- SCATTER — correlation between two variables
+- AREA — cumulative trends, stacked contributions
+- For PIE/DONUT: first column = labels, second = values
+- For all others: first column = X axis, remaining = data series
+""",
 )
 
 
@@ -45,8 +78,9 @@ def _handle_errors(func):
     return wrapper
 
 
-# ── Sheets Tools ───────────────────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════
+# TOOL 1: CREATE
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
@@ -56,6 +90,8 @@ def gsheets_create(
     folder_id: str | None = None,
 ) -> str:
     """Create a new Google Spreadsheet.
+
+    WORKFLOW: create -> write headers/data -> format headers -> freeze row 1 -> add borders.
 
     Args:
         title: Spreadsheet title
@@ -69,154 +105,173 @@ def gsheets_create(
     return f"Created: **{result['title']}**\n- ID: `{result['spreadsheet_id']}`\n- Tabs: {tabs}\n- URL: {result['url']}"
 
 
-@mcp.tool()
-@_handle_errors
-def gsheets_get_info(spreadsheet_id: str) -> str:
-    """Get metadata about a spreadsheet — title, tabs, row/column counts.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-    """
-    result = sheets_service.get_info(spreadsheet_id)
-    lines = [f"# {result['title']}\n- ID: `{result['spreadsheet_id']}`\n- URL: {result['url']}\n"]
-    for s in result["sheets"]:
-        hidden = " (hidden)" if s["hidden"] else ""
-        lines.append(f"- **{s['title']}** — {s['row_count']} rows x {s['column_count']} cols{hidden}")
-    return "\n".join(lines)
-
+# ═══════════════════════════════════════════════════════════════
+# TOOL 2: READ (read, info, find)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gsheets_read(
     spreadsheet_id: str,
-    range: str = "A1:Z1000",
+    action: str = "read",
+    cell_range: str = "A1:Z1000",
     render: Literal["formatted", "raw", "formula"] = "formatted",
+    query: str = "",
+    sheet_name: str | None = None,
+    match_case: bool = False,
 ) -> str:
-    """Read cell values from a spreadsheet range.
+    """Read data from a spreadsheet — cell values, metadata, or search.
+
+    GUIDELINES:
+    - Start with action="info" to understand the spreadsheet structure (tabs, sizes, charts)
+    - Use action="read" with a specific range for efficiency — avoid reading entire sheets
+    - Use action="find" to locate specific values before editing
+    - render="formula" reveals formulas; render="raw" gives unformatted numbers
+
+    ACTIONS:
+    - "read" — read cell values as a markdown table (uses: range, render)
+    - "info" — get spreadsheet metadata: title, tabs, row/column counts (no extra params)
+    - "find" — search for text across cells (uses: query, sheet_name, match_case)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        range: A1 notation range (e.g. "A1:D10", "Sheet1!A1:D10", "A:A", "1:1")
-        render: Value rendering — "formatted" ($1,234.56), "raw" (1234.56), or "formula" (=SUM(A1:A5))
+        action: Operation — "read", "info", or "find"
+        range: A1 notation range for read (e.g. "A1:D10", "Sheet1!A1:D10", "A:A")
+        render: Value rendering for read — "formatted" ($1,234.56), "raw" (1234.56), or "formula" (=SUM(A1:A5))
+        query: Text to search for (find action)
+        sheet_name: Limit search to a specific tab (find action)
+        match_case: Case-sensitive search (find action, default false)
     """
-    render_map = {"formatted": "FORMATTED_VALUE", "raw": "UNFORMATTED_VALUE", "formula": "FORMULA"}
-    result = sheets_service.read_range(spreadsheet_id, range, render_map.get(render, "FORMATTED_VALUE"))
+    a = action.lower()
 
-    values = result["values"]
-    if not values:
-        return f"Range `{result['range']}` is empty."
+    if a == "read":
+        render_map = {"formatted": "FORMATTED_VALUE", "raw": "UNFORMATTED_VALUE", "formula": "FORMULA"}
+        result = sheets_service.read_range(spreadsheet_id, cell_range, render_map.get(render, "FORMATTED_VALUE"))
 
-    def _escape(val: str) -> str:
-        return val.replace("|", "\\|")
+        values = result["values"]
+        if not values:
+            return f"Range `{result['range']}` is empty."
 
-    # Format as markdown table
-    headers = [_escape(str(h)) for h in values[0]]
-    col_widths = [len(h) for h in headers]
-    for row in values[1:]:
-        for i, cell in enumerate(row):
-            if i < len(col_widths):
-                col_widths[i] = max(col_widths[i], len(_escape(str(cell))))
+        def _escape(val: str) -> str:
+            return val.replace("|", "\\|")
 
-    lines = [f"Range: `{result['range']}` ({result['total_rows']} rows)\n"]
-    lines.append("| " + " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers)) + " |")
-    lines.append("| " + " | ".join("-" * w for w in col_widths) + " |")
-    for row in values[1:]:
-        cells = []
-        for i in range(len(headers)):
-            val = _escape(str(row[i])) if i < len(row) else ""
-            cells.append(val.ljust(col_widths[i]) if i < len(col_widths) else val)
-        lines.append("| " + " | ".join(cells) + " |")
+        headers = [_escape(str(h)) for h in values[0]]
+        col_widths = [len(h) for h in headers]
+        for row in values[1:]:
+            for i, cell in enumerate(row):
+                if i < len(col_widths):
+                    col_widths[i] = max(col_widths[i], len(_escape(str(cell))))
 
-    return "\n".join(lines)
+        lines = [f"Range: `{result['range']}` ({result['total_rows']} rows)\n"]
+        lines.append("| " + " | ".join(h.ljust(col_widths[i]) for i, h in enumerate(headers)) + " |")
+        lines.append("| " + " | ".join("-" * w for w in col_widths) + " |")
+        for row in values[1:]:
+            cells = []
+            for i in range(len(headers)):
+                val = _escape(str(row[i])) if i < len(row) else ""
+                cells.append(val.ljust(col_widths[i]) if i < len(col_widths) else val)
+            lines.append("| " + " | ".join(cells) + " |")
 
+        return "\n".join(lines)
+
+    elif a == "info":
+        result = sheets_service.get_info(spreadsheet_id)
+        lines = [f"# {result['title']}\n- ID: `{result['spreadsheet_id']}`\n- URL: {result['url']}\n"]
+        for s in result["sheets"]:
+            hidden = " (hidden)" if s["hidden"] else ""
+            lines.append(f"- **{s['title']}** — {s['row_count']} rows x {s['column_count']} cols{hidden}")
+        return "\n".join(lines)
+
+    elif a == "find":
+        if not query:
+            return "ERROR: query is required for find action."
+        matches = sheets_service.find_in_sheet(spreadsheet_id, query, sheet_name, match_case)
+        if not matches:
+            return f"No matches found for: {query}"
+        lines = [f"Found {len(matches)} match(es) for \"{query}\":\n"]
+        for m in matches[:50]:
+            lines.append(f"- `{m['sheet']}!{m['cell']}` = {m['value']}")
+        if len(matches) > 50:
+            lines.append(f"\n... and {len(matches) - 50} more")
+        return "\n".join(lines)
+
+    else:
+        return f"ERROR: Unknown action '{action}'. Use: read, info, find"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 3: WRITE (write, append, clear)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gsheets_write(
     spreadsheet_id: str,
-    range: str,
-    values: list[list],
+    action: str = "write",
+    cell_range: str = "",
+    values: list[list] | None = None,
     input_mode: Literal["user", "raw"] = "user",
 ) -> str:
-    """Write values to a spreadsheet range, overwriting existing data.
+    """Write, append, or clear data in a spreadsheet.
 
-    With input_mode="user", formulas (=SUM), dates, and currencies are parsed.
-    With input_mode="raw", values are stored as literal strings.
+    GUIDELINES:
+    - Use action="write" with input_mode="user" so formulas (=SUM), dates, and currencies are parsed
+    - Use action="append" to add rows without overwriting — it finds the last row automatically
+    - Use action="clear" to erase values while preserving formatting and borders
+    - Always include headers in the first write to a new range
+
+    ACTIONS:
+    - "write" — overwrite a range with new values (uses: range, values, input_mode)
+    - "append" — append rows after the last data row (uses: range, values)
+    - "clear" — clear all values in a range, formatting preserved (uses: range)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        range: A1 notation range (e.g. "Sheet1!A1:C3")
+        action: Operation — "write", "append", or "clear"
+        range: A1 notation range (e.g. "Sheet1!A1:C3", "A1")
         values: 2D array of values — [[row1col1, row1col2], [row2col1, row2col2]]
-        input_mode: "user" (parse formulas/dates) or "raw" (literal strings)
+        input_mode: For write — "user" (parse formulas/dates) or "raw" (literal strings)
     """
-    option = "USER_ENTERED" if input_mode == "user" else "RAW"
-    result = sheets_service.write_range(spreadsheet_id, range, values, option)
-    return f"Wrote {result['updated_cells']} cells to `{result['updated_range']}`"
+    a = action.lower()
+
+    if a == "write":
+        if not range:
+            return "ERROR: range is required for write action."
+        if not values:
+            return "ERROR: values is required for write action."
+        option = "USER_ENTERED" if input_mode == "user" else "RAW"
+        result = sheets_service.write_range(spreadsheet_id, cell_range, values, option)
+        return f"Wrote {result['updated_cells']} cells to `{result['updated_range']}`"
+
+    elif a == "append":
+        if not range:
+            return "ERROR: range is required for append action."
+        if not values:
+            return "ERROR: values is required for append action."
+        result = sheets_service.append_rows(spreadsheet_id, cell_range, values)
+        return f"Appended {result['updated_rows']} row(s) to `{result['updated_range']}`"
+
+    elif a == "clear":
+        if not range:
+            return "ERROR: range is required for clear action."
+        result = sheets_service.clear_range(spreadsheet_id, range)
+        return f"Cleared `{result['cleared_range']}`"
+
+    else:
+        return f"ERROR: Unknown action '{action}'. Use: write, append, clear"
 
 
-@mcp.tool()
-@_handle_errors
-def gsheets_append(
-    spreadsheet_id: str,
-    range: str,
-    values: list[list],
-) -> str:
-    """Append rows after the last row of data in a range.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range to append to (e.g. "Sheet1!A1")
-        values: 2D array of rows to append — [[val1, val2], [val3, val4]]
-    """
-    result = sheets_service.append_rows(spreadsheet_id, range, values)
-    return f"Appended {result['updated_rows']} row(s) to `{result['updated_range']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_clear(spreadsheet_id: str, range: str) -> str:
-    """Clear all values in a range. Formatting is preserved.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range to clear
-    """
-    result = sheets_service.clear_range(spreadsheet_id, range)
-    return f"Cleared `{result['cleared_range']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_find(
-    spreadsheet_id: str,
-    query: str,
-    sheet_name: str | None = None,
-    match_case: bool = False,
-) -> str:
-    """Search for text across all cells in a spreadsheet.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        query: Text to search for
-        sheet_name: Optional — limit search to a specific tab
-        match_case: Case-sensitive search (default false)
-    """
-    matches = sheets_service.find_in_sheet(spreadsheet_id, query, sheet_name, match_case)
-    if not matches:
-        return f"No matches found for: {query}"
-    lines = [f"Found {len(matches)} match(es) for \"{query}\":\n"]
-    for m in matches[:50]:
-        lines.append(f"- `{m['sheet']}!{m['cell']}` = {m['value']}")
-    if len(matches) > 50:
-        lines.append(f"\n... and {len(matches) - 50} more")
-    return "\n".join(lines)
-
+# ═══════════════════════════════════════════════════════════════
+# TOOL 4: FORMAT (style, borders, merge, unmerge,
+#                 conditional_format, data_validation)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gsheets_format(
     spreadsheet_id: str,
-    range: str,
+    action: str = "style",
+    cell_range: str = "",
     bold: bool | None = None,
     italic: bool | None = None,
     font_size: int | None = None,
@@ -226,315 +281,255 @@ def gsheets_format(
     horizontal_alignment: Literal["LEFT", "CENTER", "RIGHT"] | None = None,
     number_format: str | None = None,
     number_format_pattern: str | None = None,
-) -> str:
-    """Format cells — bold, colors, alignment, number format.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range to format
-        bold: Set bold
-        italic: Set italic
-        font_size: Font size in points
-        font_family: Font name (e.g. "Arial", "Courier New")
-        foreground_color: Text color as hex "#RRGGBB"
-        background_color: Cell background as hex "#RRGGBB"
-        horizontal_alignment: LEFT, CENTER, or RIGHT
-        number_format: Format type — NUMBER, CURRENCY, PERCENT, DATE, TIME, TEXT
-        number_format_pattern: Optional pattern (e.g. "$#,##0.00", "yyyy-MM-dd", "0.00%")
-    """
-    result = sheets_service.format_cells(
-        spreadsheet_id, range,
-        bold=bold, italic=italic, font_size=font_size, font_family=font_family,
-        foreground_color=foreground_color, background_color=background_color,
-        horizontal_alignment=horizontal_alignment,
-        number_format_type=number_format, number_format_pattern=number_format_pattern,
-    )
-    return f"Formatted `{result['formatted_range']}` ({result['fields_applied']} properties applied)"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_add_sheet(spreadsheet_id: str, title: str) -> str:
-    """Add a new sheet (tab) to an existing spreadsheet.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        title: Name for the new tab
-    """
-    result = sheets_service.add_sheet(spreadsheet_id, title)
-    return f"Added sheet **{result['title']}** (ID: {result['sheet_id']})"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_delete_sheet(spreadsheet_id: str, sheet_name: str) -> str:
-    """Delete a sheet (tab) from a spreadsheet. Cannot be undone.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        sheet_name: Name of the tab to delete
-    """
-    result = sheets_service.delete_sheet(spreadsheet_id, sheet_name)
-    return f"Deleted sheet **{result['deleted']}**"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_freeze(
-    spreadsheet_id: str,
-    sheet_name: str | None = None,
-    rows: int = 1,
-    columns: int = 0,
-    auto_resize: bool = True,
-) -> str:
-    """Freeze header rows/columns and optionally auto-resize columns to fit content.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        sheet_name: Tab name (default: first tab)
-        rows: Number of rows to freeze (default 1 for header)
-        columns: Number of columns to freeze (default 0)
-        auto_resize: Auto-fit column widths (default true)
-    """
-    result = sheets_service.freeze_rows_columns(
-        spreadsheet_id, sheet_name, rows, columns, auto_resize
-    )
-    parts = []
-    if result["frozen_rows"]:
-        parts.append(f"{result['frozen_rows']} row(s)")
-    if result["frozen_columns"]:
-        parts.append(f"{result['frozen_columns']} column(s)")
-    msg = f"Froze {' and '.join(parts)}" if parts else "Cleared freeze"
-    if result["auto_resized"]:
-        msg += " + auto-resized columns"
-    return msg
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_add_chart(
-    spreadsheet_id: str,
-    chart_type: Literal["BAR", "COLUMN", "LINE", "AREA", "SCATTER", "PIE", "DONUT"],
-    data_range: str,
-    title: str | None = None,
-    sheet_name: str | None = None,
-) -> str:
-    """Insert a chart from spreadsheet data.
-
-    For PIE/DONUT: first column = labels, second = values.
-    For all others: first column = X axis, remaining = data series.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        chart_type: Chart type — BAR, COLUMN, LINE, AREA, SCATTER, PIE, or DONUT
-        data_range: A1 notation of the data (include headers)
-        title: Optional chart title
-        sheet_name: Tab containing the data (default: first tab)
-    """
-    result = sheets_service.add_chart(
-        spreadsheet_id, chart_type, data_range, title, sheet_name
-    )
-    return f"Added {result['chart_type']} chart (ID: {result['chart_id']})"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_delete_chart(spreadsheet_id: str, chart_id: int) -> str:
-    """Delete a chart by its ID (found in gsheets_get_info or returned by gsheets_add_chart).
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        chart_id: The chart ID to delete
-    """
-    result = sheets_service.delete_chart(spreadsheet_id, chart_id)
-    return f"Deleted chart {result['deleted_chart_id']}"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_rename_sheet(spreadsheet_id: str, sheet_name: str, new_name: str) -> str:
-    """Rename a sheet (tab).
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        sheet_name: Current tab name
-        new_name: New tab name
-    """
-    result = sheets_service.rename_sheet(spreadsheet_id, sheet_name, new_name)
-    return f"Renamed **{result['old_name']}** → **{result['new_name']}**"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_sort(
-    spreadsheet_id: str,
-    range: str,
-    sort_column: str,
-    ascending: bool = True,
-    sheet_name: str | None = None,
-) -> str:
-    """Sort data in a range by a column.
-
-    Note: the range should NOT include the header row — only the data rows.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation of data rows to sort (exclude header)
-        sort_column: Column letter to sort by (e.g. "B", "D")
-        ascending: Sort ascending (default true)
-        sheet_name: Tab name (default: auto-detect from range)
-    """
-    result = sheets_service.sort_range(spreadsheet_id, range, sort_column, ascending, sheet_name)
-    direction = "ascending" if result["ascending"] else "descending"
-    return f"Sorted `{result['sorted_range']}` by column {result['sort_column']} ({direction})"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_conditional_format(
-    spreadsheet_id: str,
-    range: str,
-    rule_type: str,
-    values: list[str] | None = None,
-    bg_color: str | None = None,
-    text_color: str | None = None,
-    bold: bool = False,
-    custom_formula: str | None = None,
-) -> str:
-    """Add conditional formatting to cells.
-
-    Rule types: NUMBER_GREATER, NUMBER_LESS, NUMBER_BETWEEN, TEXT_CONTAINS,
-    TEXT_NOT_CONTAINS, BLANK, NOT_BLANK, CUSTOM_FORMULA, and more.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range
-        rule_type: Condition type (e.g. "NUMBER_GREATER", "TEXT_CONTAINS", "CUSTOM_FORMULA")
-        values: Condition values (e.g. ["100"] for NUMBER_GREATER, ["URGENT"] for TEXT_CONTAINS)
-        bg_color: Background color hex for matching cells
-        text_color: Text color hex for matching cells
-        bold: Bold text in matching cells
-        custom_formula: Formula when rule_type is CUSTOM_FORMULA (e.g. "=$D2<TODAY()")
-    """
-    result = sheets_service.add_conditional_format(
-        spreadsheet_id, range, rule_type, values, bg_color, text_color, bold, custom_formula=custom_formula,
-    )
-    return f"Added {result['rule_type']} conditional format on `{result['range']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_data_validation(
-    spreadsheet_id: str,
-    range: str,
-    rule_type: str,
-    values: list[str] | None = None,
-    strict: bool = True,
-    input_message: str | None = None,
-) -> str:
-    """Set data validation on cells — dropdowns, number ranges, etc.
-
-    Common rule types:
-    - ONE_OF_LIST with values=["Option1", "Option2"] — dropdown
-    - NUMBER_BETWEEN with values=["0", "100"] — number range
-    - TEXT_IS_EMAIL — email validation
-    - DATE_AFTER with values=["2024-01-01"] — date validation
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range
-        rule_type: Validation type (ONE_OF_LIST, NUMBER_BETWEEN, TEXT_IS_EMAIL, etc.)
-        values: Validation values
-        strict: Reject invalid input (true) or show warning only (false)
-        input_message: Tooltip shown to user
-    """
-    result = sheets_service.set_data_validation(
-        spreadsheet_id, range, rule_type, values, strict, input_message,
-    )
-    return f"Set {result['rule_type']} validation on `{result['range']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_merge(
-    spreadsheet_id: str,
-    range: str,
-    merge_type: Literal["MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS"] = "MERGE_ALL",
-) -> str:
-    """Merge cells in a range.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range to merge (e.g. "A1:C1" for header spanning)
-        merge_type: MERGE_ALL (single cell), MERGE_COLUMNS, or MERGE_ROWS
-    """
-    result = sheets_service.merge_cells(spreadsheet_id, range, merge_type)
-    return f"Merged `{result['merged_range']}` ({result['merge_type']})"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_unmerge(spreadsheet_id: str, range: str) -> str:
-    """Unmerge previously merged cells.
-
-    Args:
-        spreadsheet_id: The spreadsheet ID
-        range: A1 notation range to unmerge
-    """
-    result = sheets_service.unmerge_cells(spreadsheet_id, range)
-    return f"Unmerged `{result['unmerged_range']}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gsheets_borders(
-    spreadsheet_id: str,
-    range: str,
     style: Literal["SOLID", "SOLID_MEDIUM", "SOLID_THICK", "DASHED", "DOTTED", "DOUBLE"] = "SOLID",
     color: str = "#000000",
     edges: str = "all",
+    merge_type: Literal["MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS"] = "MERGE_ALL",
+    rule_type: str = "",
+    values: list[str] | None = None,
+    bg_color: str | None = None,
+    text_color: str | None = None,
+    custom_formula: str | None = None,
+    strict: bool = True,
+    input_message: str | None = None,
 ) -> str:
-    """Add borders to cells.
+    """Format cells — styling, borders, merging, conditional formatting, and data validation.
+
+    GUIDELINES:
+    - Bold + background_color on header rows for readability
+    - Use number_format for consistent display: CURRENCY ($#,##0.00), PERCENT (0.00%), DATE (yyyy-MM-dd)
+    - Add action="borders" with edges="outer" on the full data range for clean boundaries
+    - Use action="conditional_format" for KPI highlighting: green bg for targets met, red for missed
+    - Use action="data_validation" with rule_type="ONE_OF_LIST" for dropdown menus
+
+    ACTIONS:
+    - "style" — cell formatting (uses: range, bold, italic, font_size, font_family, foreground_color, background_color, horizontal_alignment, number_format, number_format_pattern)
+    - "borders" — add borders (uses: range, style, color, edges). Edges: all, outer, inner, top, bottom, left, right
+    - "merge" — merge cells (uses: range, merge_type). Types: MERGE_ALL, MERGE_COLUMNS, MERGE_ROWS
+    - "unmerge" — unmerge cells (uses: range)
+    - "conditional_format" — conditional formatting (uses: range, rule_type, values, bg_color, text_color, bold, custom_formula). Rule types: NUMBER_GREATER, NUMBER_LESS, NUMBER_BETWEEN, TEXT_CONTAINS, TEXT_NOT_CONTAINS, BLANK, NOT_BLANK, CUSTOM_FORMULA
+    - "data_validation" — set validation rules (uses: range, rule_type, values, strict, input_message). Rule types: ONE_OF_LIST, NUMBER_BETWEEN, TEXT_IS_EMAIL, DATE_AFTER
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        range: A1 notation range
-        style: Border style
-        color: Border color hex
-        edges: Which edges — all, outer, inner, top, bottom, left, right
+        action: Operation — "style", "borders", "merge", "unmerge", "conditional_format", "data_validation"
+        range: A1 notation range to format
+        bold: Set bold (style/conditional_format)
+        italic: Set italic (style)
+        font_size: Font size in points (style)
+        font_family: Font name e.g. "Arial" (style)
+        foreground_color: Text color hex "#RRGGBB" (style)
+        background_color: Cell background hex "#RRGGBB" (style)
+        horizontal_alignment: LEFT, CENTER, or RIGHT (style)
+        number_format: Format type — NUMBER, CURRENCY, PERCENT, DATE, TIME, TEXT (style)
+        number_format_pattern: Pattern e.g. "$#,##0.00", "yyyy-MM-dd", "0.00%" (style)
+        style: Border style (borders)
+        color: Border color hex (borders)
+        edges: Border edges — all, outer, inner, top, bottom, left, right (borders)
+        merge_type: MERGE_ALL, MERGE_COLUMNS, or MERGE_ROWS (merge)
+        rule_type: Condition/validation type (conditional_format/data_validation)
+        values: Condition values e.g. ["100"] or dropdown options ["A","B","C"] (conditional_format/data_validation)
+        bg_color: Background color hex for matching cells (conditional_format)
+        text_color: Text color hex for matching cells (conditional_format)
+        custom_formula: Formula for CUSTOM_FORMULA rule e.g. "=$D2<TODAY()" (conditional_format)
+        strict: Reject invalid input (data_validation, default true)
+        input_message: Tooltip shown to user (data_validation)
     """
-    result = sheets_service.add_borders(spreadsheet_id, range, style, color, edges=edges)
-    return f"Added {edges} borders on `{result['bordered_range']}`"
+    a = action.lower()
 
+    if a == "style":
+        if not range:
+            return "ERROR: range is required for style action."
+        result = sheets_service.format_cells(
+            spreadsheet_id, cell_range,
+            bold=bold, italic=italic, font_size=font_size, font_family=font_family,
+            foreground_color=foreground_color, background_color=background_color,
+            horizontal_alignment=horizontal_alignment,
+            number_format_type=number_format, number_format_pattern=number_format_pattern,
+        )
+        return f"Formatted `{result['formatted_range']}` ({result['fields_applied']} properties applied)"
+
+    elif a == "borders":
+        if not range:
+            return "ERROR: range is required for borders action."
+        result = sheets_service.add_borders(spreadsheet_id, cell_range, style, color, edges=edges)
+        return f"Added {edges} borders on `{result['bordered_range']}`"
+
+    elif a == "merge":
+        if not range:
+            return "ERROR: range is required for merge action."
+        result = sheets_service.merge_cells(spreadsheet_id, cell_range, merge_type)
+        return f"Merged `{result['merged_range']}` ({result['merge_type']})"
+
+    elif a == "unmerge":
+        if not range:
+            return "ERROR: range is required for unmerge action."
+        result = sheets_service.unmerge_cells(spreadsheet_id, range)
+        return f"Unmerged `{result['unmerged_range']}`"
+
+    elif a == "conditional_format":
+        if not range:
+            return "ERROR: range is required for conditional_format action."
+        if not rule_type:
+            return "ERROR: rule_type is required for conditional_format action."
+        result = sheets_service.add_conditional_format(
+            spreadsheet_id, cell_range, rule_type, values, bg_color, text_color, bold, custom_formula=custom_formula,
+        )
+        return f"Added {result['rule_type']} conditional format on `{result['range']}`"
+
+    elif a == "data_validation":
+        if not range:
+            return "ERROR: range is required for data_validation action."
+        if not rule_type:
+            return "ERROR: rule_type is required for data_validation action."
+        result = sheets_service.set_data_validation(
+            spreadsheet_id, cell_range, rule_type, values, strict, input_message,
+        )
+        return f"Set {result['rule_type']} validation on `{result['range']}`"
+
+    else:
+        return f"ERROR: Unknown action '{action}'. Use: style, borders, merge, unmerge, conditional_format, data_validation"
+
+
+# ═══════════════════════════════════════════════════════════════
+# TOOL 5: MANAGE (add_sheet, delete_sheet, rename_sheet,
+#                 duplicate_sheet, freeze, sort, add_chart,
+#                 delete_chart)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
-def gsheets_duplicate_sheet(
+def gsheets_manage(
     spreadsheet_id: str,
-    sheet_name: str,
-    new_name: str | None = None,
+    action: str,
+    title: str = "",
+    sheet_name: str | None = None,
+    new_name: str = "",
+    rows: int = 1,
+    columns: int = 0,
+    sort_column: str = "",
+    ascending: bool = True,
+    chart_type: Literal["BAR", "COLUMN", "LINE", "AREA", "SCATTER", "PIE", "DONUT"] = "COLUMN",
+    data_range: str = "",
+    chart_id: int = 0,
+    auto_resize: bool = True,
 ) -> str:
-    """Duplicate (clone) a sheet tab.
+    """Manage spreadsheet structure — tabs, freezing, sorting, and charts.
+
+    GUIDELINES:
+    - Always freeze headers after writing data: action="freeze" with rows=1
+    - Duplicate a sheet before making destructive changes as a backup
+    - Sort excludes the header row — provide only the data range
+    - For charts, include headers in data_range — first column is the X axis
+
+    ACTIONS:
+    - "add_sheet" — add a new tab (uses: title)
+    - "delete_sheet" — delete a tab, cannot be undone (uses: sheet_name)
+    - "rename_sheet" — rename a tab (uses: sheet_name, new_name)
+    - "duplicate_sheet" — clone a tab (uses: sheet_name, new_name)
+    - "freeze" — freeze header rows/columns + auto-resize (uses: sheet_name, rows, columns, auto_resize)
+    - "sort" — sort data in a range by column (uses: data_range, sort_column, ascending, sheet_name). Exclude header row from data_range.
+    - "add_chart" — insert a chart from data (uses: chart_type, data_range, title, sheet_name)
+    - "delete_chart" — remove a chart (uses: chart_id)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        sheet_name: Name of the tab to duplicate
-        new_name: Optional name for the copy
+        action: Operation — "add_sheet", "delete_sheet", "rename_sheet", "duplicate_sheet", "freeze", "sort", "add_chart", "delete_chart"
+        title: Name for new tab (add_sheet) or chart title (add_chart)
+        sheet_name: Tab name for sheet operations and chart/sort context
+        new_name: New name for rename/duplicate
+        rows: Rows to freeze (freeze, default 1)
+        columns: Columns to freeze (freeze, default 0)
+        sort_column: Column letter to sort by e.g. "B" (sort)
+        ascending: Sort ascending (sort, default true)
+        chart_type: BAR, COLUMN, LINE, AREA, SCATTER, PIE, or DONUT (add_chart)
+        data_range: A1 notation of data for sort or chart (include headers for charts)
+        chart_id: Chart ID to delete (delete_chart — find via gsheets_read action="info")
+        auto_resize: Auto-fit column widths (freeze, default true)
     """
-    result = sheets_service.duplicate_sheet(spreadsheet_id, sheet_name, new_name)
-    return f"Duplicated to **{result['title']}** (ID: {result['sheet_id']})"
+    a = action.lower()
+
+    if a == "add_sheet":
+        if not title:
+            return "ERROR: title is required for add_sheet action."
+        result = sheets_service.add_sheet(spreadsheet_id, title)
+        return f"Added sheet **{result['title']}** (ID: {result['sheet_id']})"
+
+    elif a == "delete_sheet":
+        if not sheet_name:
+            return "ERROR: sheet_name is required for delete_sheet action."
+        result = sheets_service.delete_sheet(spreadsheet_id, sheet_name)
+        return f"Deleted sheet **{result['deleted']}**"
+
+    elif a == "rename_sheet":
+        if not sheet_name:
+            return "ERROR: sheet_name is required for rename_sheet action."
+        if not new_name:
+            return "ERROR: new_name is required for rename_sheet action."
+        result = sheets_service.rename_sheet(spreadsheet_id, sheet_name, new_name)
+        return f"Renamed **{result['old_name']}** -> **{result['new_name']}**"
+
+    elif a == "duplicate_sheet":
+        if not sheet_name:
+            return "ERROR: sheet_name is required for duplicate_sheet action."
+        result = sheets_service.duplicate_sheet(spreadsheet_id, sheet_name, new_name or None)
+        return f"Duplicated to **{result['title']}** (ID: {result['sheet_id']})"
+
+    elif a == "freeze":
+        result = sheets_service.freeze_rows_columns(
+            spreadsheet_id, sheet_name, rows, columns, auto_resize
+        )
+        parts = []
+        if result["frozen_rows"]:
+            parts.append(f"{result['frozen_rows']} row(s)")
+        if result["frozen_columns"]:
+            parts.append(f"{result['frozen_columns']} column(s)")
+        msg = f"Froze {' and '.join(parts)}" if parts else "Cleared freeze"
+        if result["auto_resized"]:
+            msg += " + auto-resized columns"
+        return msg
+
+    elif a == "sort":
+        if not data_range:
+            return "ERROR: data_range is required for sort action."
+        if not sort_column:
+            return "ERROR: sort_column is required for sort action."
+        result = sheets_service.sort_range(spreadsheet_id, data_range, sort_column, ascending, sheet_name)
+        direction = "ascending" if result["ascending"] else "descending"
+        return f"Sorted `{result['sorted_range']}` by column {result['sort_column']} ({direction})"
+
+    elif a == "add_chart":
+        if not data_range:
+            return "ERROR: data_range is required for add_chart action."
+        result = sheets_service.add_chart(
+            spreadsheet_id, chart_type, data_range, title or None, sheet_name
+        )
+        return f"Added {result['chart_type']} chart (ID: {result['chart_id']})"
+
+    elif a == "delete_chart":
+        if not chart_id:
+            return "ERROR: chart_id is required for delete_chart action."
+        result = sheets_service.delete_chart(spreadsheet_id, chart_id)
+        return f"Deleted chart {result['deleted_chart_id']}"
+
+    else:
+        return f"ERROR: Unknown action '{action}'. Use: add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, sort, add_chart, delete_chart"
 
 
-# ── Google Drive Tools (shared) ────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════
+# DRIVE TOOLS (shared)
+# ═══════════════════════════════════════════════════════════════
 
 @mcp.tool()
 @_handle_errors
 def gdrive_search(query: str, max_results: int = 20) -> str:
-    """Search for files in Google Drive.
+    """Search for files in Google Drive by name or content.
+
+    USE FOR: Finding spreadsheet IDs, template files, data files.
+    Returns file IDs needed by other tools.
 
     Args:
-        query: Search query
+        query: Search query (searches file names and content)
         max_results: Maximum results (default 20)
     """
     results = drive_service.search_files(query, max_results=max_results)
@@ -551,15 +546,17 @@ def gdrive_search(query: str, max_results: int = 20) -> str:
 def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> str:
     """List files in a Google Drive folder.
 
+    USE FOR: Browsing folder contents, finding spreadsheets, checking what exists.
+    Returns file IDs and types.
+
     Args:
-        folder_id: Folder ID (omit for root)
+        folder_id: Folder ID (omit for root/My Drive)
         max_results: Maximum results (default 50)
     """
     results = drive_service.list_folder(folder_id=folder_id, max_results=max_results)
     if not results:
         return "Folder is empty"
-    label = f"folder `{folder_id}`" if folder_id else "My Drive"
-    lines = [f"Contents of {label} ({len(results)} items):\n"]
+    lines = [f"Contents ({len(results)} items):\n"]
     for f in results:
         lines.append(f"- **{f['name']}** (`{f['id']}`)\n  {f['mime_type']} | {f['modified']}")
     return "\n".join(lines)
@@ -567,101 +564,81 @@ def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> s
 
 @mcp.tool()
 @_handle_errors
-def gdrive_move(file_id: str, folder_id: str) -> str:
-    """Move a file to a different Drive folder.
-
-    Args:
-        file_id: The file ID
-        folder_id: Target folder ID
-    """
-    result = drive_service.move_file(file_id, folder_id)
-    return f"Moved **{result['name']}** to folder `{folder_id}`"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_delete(file_id: str, confirm: bool = False) -> str:
-    """DESTRUCTIVE: Move a file to trash (recoverable 30 days). Requires confirm=true.
-
-    Args:
-        file_id: The file ID to delete
-        confirm: Must be true to proceed
-    """
-    if not confirm:
-        return "REFUSED: confirm must be true. Ask the user first."
-    result = drive_service.trash_file(file_id)
-    return f"Trashed **{result['name']}** (`{result['id']}`)"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_upload(local_path: str, folder_id: str | None = None, name: str | None = None) -> str:
-    """Upload a local file to Google Drive.
-
-    Args:
-        local_path: Path to the local file
-        folder_id: Optional target folder ID
-        name: Optional name override
-    """
-    result = drive_service.upload_file(local_path, name, folder_id)
-    return f"Uploaded **{result['name']}** (`{result['id']}`)\n- Type: {result['mime_type']}\n- URL: {result['url']}"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_export(
-    file_id: str,
-    format: Literal["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md"],
-    output_path: str | None = None,
-) -> str:
-    """Export a Google Workspace file to a local format. Max 10MB.
-
-    Args:
-        file_id: The Google Workspace file ID
-        format: Export format (pdf, docx, xlsx, pptx, csv, txt, md)
-        output_path: Optional output path
-    """
-    result = drive_service.export_file(file_id, format, output_path)
-    size_kb = result["size"] / 1024
-    return f"Exported to **{result['path']}** ({size_kb:.1f} KB)"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_copy(file_id: str, name: str | None = None, folder_id: str | None = None) -> str:
-    """Copy a file (for template workflows).
-
-    Args:
-        file_id: The file ID to copy
-        name: Optional name for the copy
-        folder_id: Optional folder for the copy
-    """
-    result = drive_service.copy_file(file_id, name, folder_id)
-    return f"Copied to **{result['name']}** (`{result['id']}`)\n- URL: {result['url']}"
-
-
-@mcp.tool()
-@_handle_errors
-def gdrive_share(
-    file_id: str,
-    email: str | None = None,
-    role: Literal["reader", "writer", "commenter"] = "reader",
+def gdrive_ops(
+    action: str,
+    file_id: str = "",
+    folder_id: str = "",
+    local_path: str = "",
+    name: str = "",
+    format: str = "pdf",
+    output_path: str = "",
+    email: str = "",
+    role: str = "reader",
     anyone: bool = False,
+    confirm: bool = False,
 ) -> str:
-    """Share a file with a user or make it public.
+    """Google Drive file operations.
+
+    ACTIONS:
+    - "move" — move file (uses: file_id, folder_id)
+    - "delete" — trash file (uses: file_id, confirm=true)
+    - "rename" — rename file (uses: file_id, name)
+    - "copy" — copy file (uses: file_id, name, folder_id)
+    - "upload" — upload local file (uses: local_path, folder_id, name)
+    - "export" — export as PDF/DOCX/etc (uses: file_id, format, output_path)
+    - "share" — share file (uses: file_id, email, role, anyone)
+    - "info" — get file metadata (uses: file_id)
+    - "create_folder" — create folder (uses: name, folder_id as parent)
 
     Args:
-        file_id: The file ID
-        email: Email to share with (omit if anyone=true)
-        role: Permission level
-        anyone: Make public (anyone with link)
+        action: Operation
+        file_id: Target file ID
+        folder_id: Target folder ID
+        local_path: Local file path (upload)
+        name: File/folder name
+        format: Export format (pdf, docx, xlsx, pptx, csv, txt, png)
+        output_path: Export output path
+        email: Email for sharing
+        role: Permission role (reader/writer/commenter)
+        anyone: Make public
+        confirm: Confirm deletion
     """
-    result = drive_service.share_file(file_id, email, role, anyone)
-    return f"Shared with {result['shared_with']} as {result['role']}\n- URL: {result['url']}"
+    a = action.lower()
+
+    if a == "move":
+        r = drive_service.move_file(file_id, folder_id)
+        return f"Moved **{r['name']}** to `{folder_id}`"
+    elif a == "delete":
+        if not confirm:
+            return "REFUSED: set confirm=true"
+        r = drive_service.trash_file(file_id)
+        return f"Trashed **{r['name']}**"
+    elif a == "rename":
+        r = drive_service.rename_file(file_id, name)
+        return f"Renamed -> **{r['name']}**"
+    elif a == "copy":
+        r = drive_service.copy_file(file_id, name, folder_id or None)
+        return f"Copied -> **{r['name']}** (`{r['id']}`)"
+    elif a == "upload":
+        r = drive_service.upload_file(local_path, name or None, folder_id or None)
+        return f"Uploaded **{r['name']}** (`{r['id']}`)"
+    elif a == "export":
+        r = drive_service.export_file(file_id, format, output_path or None)
+        return f"Exported -> **{r['path']}** ({r['size']/1024:.1f} KB)"
+    elif a == "share":
+        r = drive_service.share_file(file_id, email or None, role, anyone)
+        return f"Shared with {r['shared_with']} as {r['role']}\nURL: {r['url']}"
+    elif a == "info":
+        r = drive_service.get_file_info(file_id)
+        return f"**{r['name']}**\nType: {r['mime_type']}\nOwner: {', '.join(r['owners'])}\nShared: {r['shared']}\nURL: {r['url']}"
+    elif a == "create_folder":
+        r = drive_service.create_folder(name, folder_id or None)
+        return f"Created **{r['name']}** (`{r['id']}`)"
+    else:
+        return f"ERROR: Unknown action '{action}'"
 
 
-# ── Entry Point ────────────────────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "auth":
