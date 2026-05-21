@@ -1,7 +1,8 @@
 """Convert draw.io mxGraph XML to Google Slides API requests.
 
-Proper proportional scaling: every dimension (shapes, positions, stroke
-widths, font sizes) scales by a single factor to fit the slide.
+Proportional scaling with accurate text fitting based on Google Slides'
+actual shape padding (0.05" per side) and font metrics.
+Canvas: 10" × 5.625" (914400 EMU/inch).
 """
 
 from __future__ import annotations
@@ -16,6 +17,20 @@ from shared.utils import hex_to_rgb
 EMU_PER_INCH = 914400
 SLIDE_W_IN = 10.0
 SLIDE_H_IN = 5.625
+
+# Google Slides shape internal text padding (default, per side)
+SHAPE_INSET = 0.05  # inches — 3.6pt per side
+
+# Content area matching design.py (TITLE_ONLY layout)
+MARGIN_LR = 0.75   # left/right margins
+MARGIN_TB = 0.35    # top/bottom margins for diagram
+TITLE_RESERVE = 1.0 # space reserved for TITLE_ONLY placeholder
+
+# Font metrics for proportional fonts (Open Sans / Arial)
+CHAR_W_RATIO = 0.52  # avg char width as fraction of font_pt
+LINE_H_RATIO = 1.35  # line height as fraction of font_pt
+MIN_FONT_PT = 6
+MAX_FONT_PT = 14
 
 SHAPE_MAP = {
     "": "ROUND_RECTANGLE", "rhombus": "DIAMOND", "ellipse": "ELLIPSE",
@@ -43,7 +58,8 @@ def _parse_style(s: str) -> dict:
 
 def _clean(val: str | None) -> str:
     if not val: return ""
-    t = val.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", '"').replace("&#xa;", "\n").replace("&nbsp;", " ")
+    t = val.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+    t = t.replace("&quot;", '"').replace("&#xa;", "\n").replace("&nbsp;", " ")
     t = re.sub(r"<br\s*/?>", "\n", t, flags=re.IGNORECASE)
     t = re.sub(r"<[^>]+>", "", t)
     t = t.replace("\\n", "\n")
@@ -62,7 +78,8 @@ def _shape_type(style: dict) -> str:
 
 
 def _color(c: str | None, default: str = "#666666") -> str:
-    if not c or c in ("default", "none", ""): return default
+    if not c or c in ("default", ""): return default
+    if c == "none": return "none"
     c = c.strip()
     if not c.startswith("#"): return default
     return c
@@ -127,7 +144,7 @@ def drawio_xml_to_slides_requests(
     root = ET.fromstring(xml_content)
     cells = root.findall(".//mxCell")
 
-    # Find structural IDs
+    # Find structural IDs (root cells and layer cells)
     structural = set()
     for c in cells:
         if not c.get("parent"):
@@ -136,7 +153,7 @@ def drawio_xml_to_slides_requests(
         if c.get("parent") in structural and not c.get("vertex") and not c.get("edge"):
             structural.add(c.get("id", ""))
 
-    # Parse all vertices
+    # Parse all vertices and edges
     all_v = []
     edges = []
     for c in cells:
@@ -184,17 +201,15 @@ def drawio_xml_to_slides_requests(
     for v in all_v:
         resolve(v)
 
-    # Filter: skip canvas backgrounds (>50% of max dimensions)
+    # Filter out non-renderable shapes
     max_w = max(v["w"] for v in all_v)
     max_h = max(v["h"] for v in all_v)
     vertices = []
     for v in all_v:
         if v["w"] > max_w * 0.5 and v["h"] > max_h * 0.5 and not v["label"]:
             continue
-        # Skip pure image shapes with no label
         if ("image" in v["style_str"][:15] or v["style"].get("image")) and not v["label"]:
             continue
-        # Skip invisible shapes
         if not v["label"] and v["style"].get("strokeColor") == "none" and v["style"].get("fillColor") == "none":
             continue
         vertices.append(v)
@@ -215,7 +230,7 @@ def drawio_xml_to_slides_requests(
                 _container_ids.add(v["id"])
                 break
 
-    # Bounding box
+    # Bounding box of all vertices
     min_x = min(v["x"] for v in vertices)
     min_y = min(v["y"] for v in vertices)
     max_r = max(v["x"] + v["w"] for v in vertices)
@@ -224,18 +239,17 @@ def drawio_xml_to_slides_requests(
     dh = max_b - min_y
     if dw == 0 or dh == 0: return [], {}
 
-    # SINGLE SCALE FACTOR — fit diagram to slide with margin
-    margin = 0.3
-    title_offset = 1.1 if title else 0.0
-    usable_w = SLIDE_W_IN - 2 * margin
-    usable_h = SLIDE_H_IN - 2 * margin - title_offset
+    # Scale to fit content area (matching design.py layout)
+    title_offset = TITLE_RESERVE if title else 0.0
+    usable_w = SLIDE_W_IN - 2 * MARGIN_LR
+    usable_h = SLIDE_H_IN - MARGIN_TB - title_offset - MARGIN_TB
     scale = min(usable_w / dw, usable_h / dh)
 
-    # Center the diagram on the slide
+    # Center the diagram in the content area
     scaled_w = dw * scale
     scaled_h = dh * scale
     ox = (SLIDE_W_IN - scaled_w) / 2
-    oy = margin + title_offset + (usable_h - scaled_h) / 2
+    oy = MARGIN_TB + title_offset + (usable_h - scaled_h) / 2
 
     def emu(inches: float) -> int:
         return int(inches * EMU_PER_INCH)
@@ -249,17 +263,18 @@ def drawio_xml_to_slides_requests(
     def pos_y(y: float) -> int:
         return emu((y - min_y) * scale + oy)
 
-    def fit_font(label: str, shape_w_in: float, shape_h_in: float, original_pt: int) -> int:
-        if not label: return original_pt
-        pad_w = shape_w_in * 0.88
-        pad_h = shape_h_in * 0.85
+    def fit_font(label: str, shape_w_in: float, shape_h_in: float) -> int:
+        """Calculate font size that fits text inside shape, accounting for Slides padding."""
+        if not label: return 10
+        text_w = max(0.1, (shape_w_in - 2 * SHAPE_INSET)) * 72  # pt
+        text_h = max(0.1, (shape_h_in - 2 * SHAPE_INSET)) * 72  # pt
         lines = label.split("\n")
-        max_line = max(len(l) for l in lines) if lines else 1
+        max_chars = max(len(l) for l in lines) if lines else 1
         num_lines = len(lines)
-        if max_line == 0: return original_pt
-        fw = (pad_w * 72) / (max_line * 0.55) if max_line > 0 else 20
-        fh = (pad_h * 72) / (num_lines * 1.35) if num_lines > 0 else 20
-        return max(5, min(int(min(fw, fh)), 14))
+        if max_chars == 0: return 10
+        fw = text_w / (max_chars * CHAR_W_RATIO) if max_chars > 0 else 20
+        fh = text_h / (num_lines * LINE_H_RATIO) if num_lines > 0 else 20
+        return max(MIN_FONT_PT, min(int(min(fw, fh)), MAX_FONT_PT))
 
     requests: list[dict] = []
     node_map: dict[str, str] = {}
@@ -272,11 +287,14 @@ def drawio_xml_to_slides_requests(
         node_map[v["id"]] = sid
         st = v["style"]
 
+        is_text = st.get("text") is True or "text;" in v["style_str"][:10]
         is_image = "image" in v["style_str"][:15] or st.get("image")
         stype = "ROUND_RECTANGLE" if is_image else _shape_type(st)
 
-        fill = _color(st.get("fillColor"), "#FFFFFF")
-        stroke = _color(st.get("strokeColor"), "#999999")
+        raw_fill = st.get("fillColor", "")
+        raw_stroke = st.get("strokeColor", "")
+        fill = _color(raw_fill, "#FFFFFF")
+        stroke = _color(raw_stroke, "#999999")
         fcol = _color(st.get("fontColor"), "#333333")
         orig_font = int(float(st.get("fontSize", "10") or "10"))
         is_dashed = st.get("dashed") == "1"
@@ -285,7 +303,8 @@ def drawio_xml_to_slides_requests(
 
         w_in = v["w"] * scale
         h_in = v["h"] * scale
-        stroke_w = max(0.5, float(st.get("strokeWidth", "1.5")) * scale * 50)
+        raw_sw = float(st.get("strokeWidth", "1.5"))
+        stroke_w = max(0.5, min(raw_sw * scale * 30, 3.0))
 
         # Create shape
         requests.append({
@@ -301,28 +320,34 @@ def drawio_xml_to_slides_requests(
             }
         })
 
-        # Vertical alignment: honor draw.io style, auto-detect labeled containers
+        # Vertical alignment
         va = st.get("verticalAlign", "middle")
         v_align = {"top": "TOP", "bottom": "BOTTOM"}.get(va, "MIDDLE")
         if v["id"] in _container_ids:
             v_align = "TOP"
 
-        # Shape properties (autofit not writable via API — rely on fit_font sizing)
         props: dict = {"contentAlignment": v_align}
         flds = ["contentAlignment"]
 
-        if is_container or fill in ("#FFFFFF", "#ffffff"):
+        # Fill — transparent for containers, white, text-style, or "none"
+        no_fill = (is_container or is_text or fill == "none"
+                   or fill in ("#FFFFFF", "#ffffff"))
+        if no_fill:
             props["shapeBackgroundFill"] = {"propertyState": "NOT_RENDERED"}
-        elif fill:
+        else:
             alpha = float(st.get("opacity", "100")) / 100.0
             props["shapeBackgroundFill"] = {"solidFill": {"color": {"rgbColor": hex_to_rgb(fill)}, "alpha": alpha}}
         flds.append("shapeBackgroundFill")
 
-        props["outline"] = {
-            "outlineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(stroke)}, "alpha": 1.0}},
-            "weight": {"magnitude": stroke_w, "unit": "PT"},
-            **({"dashStyle": "DASH"} if is_dashed else {}),
-        }
+        # Outline — hide for text-style shapes or "none" stroke
+        if is_text or stroke == "none":
+            props["outline"] = {"propertyState": "NOT_RENDERED"}
+        else:
+            props["outline"] = {
+                "outlineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(stroke)}, "alpha": 1.0}},
+                "weight": {"magnitude": stroke_w, "unit": "PT"},
+                **({"dashStyle": "DASH"} if is_dashed else {}),
+            }
         flds.append("outline")
 
         requests.append({
@@ -331,10 +356,10 @@ def drawio_xml_to_slides_requests(
             }
         })
 
-        # Text — size calculated to fit the shape, no truncation
+        # Text — font size calculated to fit within shape padding
         if v["label"]:
             requests.append({"insertText": {"objectId": sid, "text": v["label"]}})
-            fpt = fit_font(v["label"], w_in, h_in, orig_font)
+            fpt = fit_font(v["label"], w_in, h_in)
             requests.append({
                 "updateTextStyle": {
                     "objectId": sid,
@@ -354,8 +379,7 @@ def drawio_xml_to_slides_requests(
                 }
             })
 
-    # Edges → connectors using CURVED lines + RerouteLineRequest
-    # Google Slides auto-picks the closest connection sites
+    # Edges → connectors with auto-routing
     for edge in edges:
         src, tgt = edge["source"], edge["target"]
         if src not in node_map or tgt not in node_map: continue
@@ -364,16 +388,14 @@ def drawio_xml_to_slides_requests(
         est = edge["style"]
 
         estroke = _color(est.get("strokeColor"), "#666666")
+        if estroke == "none": estroke = "#666666"
         earrow = "NONE" if est.get("endArrow") == "none" else "FILL_ARROW"
         edash = est.get("dashed") == "1"
-        ew = max(0.75, min(float(est.get("strokeWidth", "1")), 1.5))
-
-        # Use CURVED for all connectors — smoothest rendering in Slides
-        ctype = "CURVED"
+        ew = max(0.75, min(float(est.get("strokeWidth", "1")), 2.0))
 
         requests.append({
             "createLine": {
-                "objectId": lid, "category": ctype,
+                "objectId": lid, "category": "CURVED",
                 "elementProperties": {
                     "pageObjectId": slide_id,
                     "size": {"width": {"magnitude": 1, "unit": "EMU"}, "height": {"magnitude": 1, "unit": "EMU"}},
@@ -381,7 +403,6 @@ def drawio_xml_to_slides_requests(
                 },
             }
         })
-        # Connect to both shapes with any site — RerouteLineRequest will fix it
         requests.append({
             "updateLineProperties": {
                 "objectId": lid,
@@ -392,7 +413,6 @@ def drawio_xml_to_slides_requests(
                 "fields": "startConnection,endConnection",
             }
         })
-        # Let Google Slides auto-pick the best connection sites
         requests.append({"rerouteLine": {"objectId": lid}})
 
         lp: dict = {
