@@ -2059,6 +2059,311 @@ def delete_element(presentation_id: str, element_id: str) -> dict:
     return {"deleted": element_id}
 
 
+def get_image_url(presentation_id: str, element_id: str) -> dict:
+    """Extract the image URL from an image element or shape with image fill."""
+    service = _get_service()
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+    for slide in pres.get("slides", []):
+        for elem in slide.get("pageElements", []):
+            if elem["objectId"] != element_id:
+                continue
+            result: dict = {"element_id": element_id}
+            img = elem.get("image", {})
+            if img:
+                if img.get("sourceUrl"):
+                    result["source_url"] = img["sourceUrl"]
+                if img.get("contentUrl"):
+                    result["content_url"] = img["contentUrl"]
+                    result["content_url_note"] = "Temporary (30 min). Use source_url for permanence."
+                s = elem.get("size", {})
+                result["width_emu"] = s.get("width", {}).get("magnitude", 0)
+                result["height_emu"] = s.get("height", {}).get("magnitude", 0)
+                return result
+            shape = elem.get("shape", {})
+            bg = shape.get("shapeProperties", {}).get("shapeBackgroundFill", {})
+            fill = bg.get("stretchedPictureFill", {})
+            if fill.get("contentUrl"):
+                result["content_url"] = fill["contentUrl"]
+                result["content_url_note"] = "Temporary (30 min). Re-host for permanence."
+                return result
+            return {"error": f"Element {element_id} is not an image"}
+    return {"error": f"Element {element_id} not found"}
+
+
+def _read_element(pres: dict, element_id: str) -> dict | None:
+    """Find a PageElement by ID across all slides in a presentation."""
+    for slide in pres.get("slides", []):
+        for elem in slide.get("pageElements", []):
+            if elem["objectId"] == element_id:
+                return elem
+    return None
+
+
+def _recreate_element(
+    elem: dict, slide_id: str, offset_x: int = 0, offset_y: int = 0,
+) -> list[dict]:
+    """Build API requests to recreate a PageElement on a target slide."""
+    from shared.utils import hex_to_rgb
+    reqs: list[dict] = []
+    new_id = _new_id()
+    t = elem.get("transform", {})
+    s = elem.get("size", {})
+
+    tx = t.get("translateX", 0) + offset_x
+    ty = t.get("translateY", 0) + offset_y
+
+    base_transform = {
+        "scaleX": t.get("scaleX", 1), "scaleY": t.get("scaleY", 1),
+        "shearX": t.get("shearX", 0), "shearY": t.get("shearY", 0),
+        "translateX": tx, "translateY": ty, "unit": "EMU",
+    }
+    base_size = {
+        "width": s.get("width", {"magnitude": 914400, "unit": "EMU"}),
+        "height": s.get("height", {"magnitude": 914400, "unit": "EMU"}),
+    }
+
+    img = elem.get("image", {})
+    shape = elem.get("shape", {})
+    line = elem.get("line", {})
+    table = elem.get("table", {})
+
+    if img:
+        url = img.get("sourceUrl") or img.get("contentUrl", "")
+        if url:
+            reqs.append({"createImage": {
+                "objectId": new_id, "url": url,
+                "elementProperties": {
+                    "pageObjectId": slide_id,
+                    "size": base_size,
+                    "transform": base_transform,
+                },
+            }})
+    elif shape:
+        shape_type = shape.get("shapeType", "RECTANGLE")
+        if shape_type == "TEXT_BOX":
+            reqs.append({"createShape": {
+                "objectId": new_id, "shapeType": "TEXT_BOX",
+                "elementProperties": {
+                    "pageObjectId": slide_id,
+                    "size": base_size, "transform": base_transform,
+                },
+            }})
+        else:
+            reqs.append({"createShape": {
+                "objectId": new_id, "shapeType": shape_type,
+                "elementProperties": {
+                    "pageObjectId": slide_id,
+                    "size": base_size, "transform": base_transform,
+                },
+            }})
+
+        sp = shape.get("shapeProperties", {})
+        props: dict = {}
+        fields: list[str] = []
+
+        bg_fill = sp.get("shapeBackgroundFill", {})
+        if bg_fill.get("solidFill"):
+            props["shapeBackgroundFill"] = bg_fill
+            fields.append("shapeBackgroundFill")
+        elif bg_fill.get("propertyState") == "NOT_RENDERED":
+            props["shapeBackgroundFill"] = {"propertyState": "NOT_RENDERED"}
+            fields.append("shapeBackgroundFill")
+
+        outline = sp.get("outline", {})
+        if outline:
+            props["outline"] = outline
+            fields.append("outline")
+
+        ca = sp.get("contentAlignment")
+        if ca:
+            props["contentAlignment"] = ca
+            fields.append("contentAlignment")
+
+        if fields:
+            reqs.append({"updateShapeProperties": {
+                "objectId": new_id, "shapeProperties": props,
+                "fields": ",".join(fields),
+            }})
+
+        text_content = shape.get("text", {})
+        full_text = ""
+        for te in text_content.get("textElements", []):
+            tr = te.get("textRun", {})
+            if tr.get("content"):
+                full_text += tr["content"]
+        if full_text.rstrip("\n"):
+            reqs.append({"insertText": {"objectId": new_id, "text": full_text.rstrip("\n")}})
+
+            for te in text_content.get("textElements", []):
+                tr = te.get("textRun", {})
+                if not tr.get("content"):
+                    continue
+                ts = tr.get("style", {})
+                start = te.get("startIndex", 0)
+                end = te.get("endIndex", start + len(tr["content"]))
+                style_update: dict = {}
+                style_fields: list[str] = []
+                if ts.get("fontFamily"):
+                    style_update["fontFamily"] = ts["fontFamily"]
+                    style_fields.append("fontFamily")
+                if ts.get("fontSize"):
+                    style_update["fontSize"] = ts["fontSize"]
+                    style_fields.append("fontSize")
+                if ts.get("bold") is not None:
+                    style_update["bold"] = ts["bold"]
+                    style_fields.append("bold")
+                if ts.get("italic") is not None:
+                    style_update["italic"] = ts["italic"]
+                    style_fields.append("italic")
+                fg = ts.get("foregroundColor")
+                if fg:
+                    style_update["foregroundColor"] = fg
+                    style_fields.append("foregroundColor")
+                if style_fields:
+                    reqs.append({"updateTextStyle": {
+                        "objectId": new_id,
+                        "style": style_update,
+                        "textRange": {"type": "FIXED_RANGE", "startIndex": start, "endIndex": end},
+                        "fields": ",".join(style_fields),
+                    }})
+
+            for te in text_content.get("textElements", []):
+                pp = te.get("paragraphMarker", {})
+                ps = pp.get("style", {})
+                if ps.get("alignment"):
+                    idx = te.get("startIndex", 0)
+                    reqs.append({"updateParagraphStyle": {
+                        "objectId": new_id,
+                        "style": {"alignment": ps["alignment"]},
+                        "textRange": {"type": "FIXED_RANGE", "startIndex": idx, "endIndex": idx + 1},
+                        "fields": "alignment",
+                    }})
+
+    elif line:
+        line_type = line.get("lineCategory", line.get("lineType", "STRAIGHT_CONNECTOR_1"))
+        category = "STRAIGHT"
+        if "CURVE" in str(line_type).upper():
+            category = "CURVED"
+        elif "BENT" in str(line_type).upper():
+            category = "BENT"
+        reqs.append({"createLine": {
+            "objectId": new_id, "category": category,
+            "elementProperties": {
+                "pageObjectId": slide_id,
+                "size": base_size, "transform": base_transform,
+            },
+        }})
+        lp = line.get("lineProperties", {})
+        if lp:
+            lp_clean = {k: v for k, v in lp.items() if k not in ("startConnection", "endConnection")}
+            if lp_clean:
+                reqs.append({"updateLineProperties": {
+                    "objectId": new_id, "lineProperties": lp_clean,
+                    "fields": ",".join(lp_clean.keys()),
+                }})
+
+    return reqs
+
+
+def clone_slide(
+    source_presentation_id: str, source_slide_id: str,
+    target_presentation_id: str | None = None, position: int = -1,
+) -> dict:
+    """Clone a slide. Same-deck uses native duplicate. Cross-deck recreates elements."""
+    service = _get_service()
+
+    if not target_presentation_id or target_presentation_id == source_presentation_id:
+        new_id = _new_id()
+        reqs = [{"duplicateObject": {
+            "objectId": source_slide_id,
+            "objectIds": {source_slide_id: new_id},
+        }}]
+        if position >= 0:
+            reqs.append({"updateSlidesPosition": {
+                "slideObjectIds": [new_id], "insertionIndex": position,
+            }})
+        execute_with_retry(service.presentations().batchUpdate(
+            presentationId=source_presentation_id, body={"requests": reqs}))
+        return {"slide_id": new_id, "method": "duplicate", "presentation_id": source_presentation_id}
+
+    source_pres = execute_with_retry(service.presentations().get(presentationId=source_presentation_id))
+    source_slide = None
+    for slide in source_pres.get("slides", []):
+        if slide["objectId"] == source_slide_id:
+            source_slide = slide
+            break
+    if not source_slide:
+        return {"error": f"Slide {source_slide_id} not found in source presentation"}
+
+    new_slide_id = _new_id()
+    create_reqs: list[dict] = [{"createSlide": {
+        "objectId": new_slide_id,
+        "slideLayoutReference": {"predefinedLayout": "BLANK"},
+    }}]
+    if position >= 0:
+        create_reqs.append({"updateSlidesPosition": {
+            "slideObjectIds": [new_slide_id], "insertionIndex": position,
+        }})
+
+    bg = source_slide.get("slideProperties", {}).get("pageBackgroundFill", {})
+    if bg.get("solidFill"):
+        create_reqs.append({"updatePageProperties": {
+            "objectId": new_slide_id,
+            "pageProperties": {"pageBackgroundFill": bg},
+            "fields": "pageBackgroundFill",
+        }})
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=target_presentation_id, body={"requests": create_reqs}))
+
+    elem_reqs: list[dict] = []
+    for elem in source_slide.get("pageElements", []):
+        elem_reqs.extend(_recreate_element(elem, new_slide_id))
+
+    if elem_reqs:
+        for i in range(0, len(elem_reqs), 50):
+            batch = elem_reqs[i:i + 50]
+            execute_with_retry(service.presentations().batchUpdate(
+                presentationId=target_presentation_id, body={"requests": batch}))
+
+    element_count = len(source_slide.get("pageElements", []))
+    return {
+        "slide_id": new_slide_id, "method": "recreate",
+        "elements_copied": element_count,
+        "presentation_id": target_presentation_id,
+    }
+
+
+def copy_element(
+    source_presentation_id: str, element_id: str,
+    target_presentation_id: str, target_slide_id: str,
+    x: float | None = None, y: float | None = None,
+) -> dict:
+    """Copy a specific element from one presentation to another at optional x/y (inches)."""
+    service = _get_service()
+    source_pres = execute_with_retry(service.presentations().get(presentationId=source_presentation_id))
+    elem = _read_element(source_pres, element_id)
+    if not elem:
+        return {"error": f"Element {element_id} not found"}
+
+    offset_x = 0
+    offset_y = 0
+    if x is not None:
+        orig_x = elem.get("transform", {}).get("translateX", 0)
+        offset_x = _inches(x) - orig_x
+    if y is not None:
+        orig_y = elem.get("transform", {}).get("translateY", 0)
+        offset_y = _inches(y) - orig_y
+
+    reqs = _recreate_element(elem, target_slide_id, offset_x, offset_y)
+    if not reqs:
+        return {"error": f"Element {element_id} type not supported for copy"}
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=target_presentation_id, body={"requests": reqs}))
+    return {"copied": element_id, "to_slide": target_slide_id, "requests": len(reqs)}
+
+
 def add_hyperlink(
     presentation_id: str, element_id: str, url: str,
     start_index: int | None = None, end_index: int | None = None,
