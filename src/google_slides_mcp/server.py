@@ -687,11 +687,24 @@ def gslides_import(
 @mcp.tool()
 @_handle_errors
 def gslides_search_shapes(query: str, max_results: int = 10) -> str:
-    """Search the curated shape library (58 shapes) for draw.io diagrams.
+    """Search the curated shape library (58 shapes) for draw.io XML generation.
+
+    USE WITH: gslides_import(format="drawio"). Returns exact draw.io style strings
+    you can paste directly into mxCell elements.
+
+    CATEGORIES: basic shapes, flowchart, business/people, data/storage, arrows,
+    symbols, tech (server/laptop/router), containers.
+
+    STYLE GUIDE for draw.io XML:
+    - Use pastel fills: fillColor=#dbeafe (blue), #dcfce7 (green), #fef9c3 (yellow)
+    - Matching strokes: strokeColor=#6c8ebf, #82b366, #d6b656
+    - All shapes: rounded=1;whiteSpace=wrap;strokeWidth=1.5
+    - Text: fontColor=#333333, fontSize=9-10
+    - Connectors: strokeColor=#666666, strokeWidth=1
 
     Args:
-        query: Keywords (e.g. "database", "server", "decision", "gear")
-        max_results: Max results
+        query: Keywords (e.g. "database", "server", "decision", "gear", "user")
+        max_results: Max results (default 10)
     """
     from .shape_search import search_shapes
     results = search_shapes(query, max_results)
@@ -711,11 +724,14 @@ def gslides_search_shapes(query: str, max_results: int = 10) -> str:
 @mcp.tool()
 @_handle_errors
 def gdrive_search(query: str, max_results: int = 20) -> str:
-    """Search for files in Google Drive.
+    """Search for files in Google Drive by name or content.
+
+    USE FOR: Finding presentation IDs, template files, images to insert.
+    Returns file IDs needed by other tools (gslides_read, gdrive_ops, etc.).
 
     Args:
-        query: Search query
-        max_results: Maximum results
+        query: Search query (searches file names and content)
+        max_results: Maximum results (default 20)
     """
     results = drive_service.search_files(query, max_results=max_results)
     if not results: return f"No files found for: {query}"
@@ -728,11 +744,14 @@ def gdrive_search(query: str, max_results: int = 20) -> str:
 @mcp.tool()
 @_handle_errors
 def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> str:
-    """List files in a Drive folder.
+    """List files in a Google Drive folder.
+
+    USE FOR: Browsing folder contents, finding template files, checking what exists.
+    Returns file IDs and types (doc, sheet, slide, folder).
 
     Args:
-        folder_id: Folder ID (omit for root)
-        max_results: Maximum results
+        folder_id: Folder ID (omit for root/My Drive)
+        max_results: Maximum results (default 50)
     """
     results = drive_service.list_folder(folder_id=folder_id, max_results=max_results)
     if not results: return "Folder is empty"
