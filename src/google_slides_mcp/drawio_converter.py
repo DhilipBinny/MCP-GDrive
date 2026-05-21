@@ -23,8 +23,8 @@ SHAPE_INSET = 0.05  # inches — 3.6pt per side
 
 # Content area matching design.py (TITLE_ONLY layout)
 MARGIN_LR = 0.75   # left/right margins
-MARGIN_TB = 0.35    # top/bottom margins for diagram
-TITLE_RESERVE = 1.05 # title box (0.83") + gap to body (0.22")
+MARGIN_TB = 0.50    # top/bottom margins (matches design.py)
+TITLE_RESERVE = 1.0 # title_h (0.833") + gap (0.167") = body starts at 1.5"
 
 MIN_FONT_PT = 6
 MAX_FONT_PT = 14
@@ -71,7 +71,7 @@ def _shape_type(style: dict) -> str:
     if style.get("ellipse"): return "ELLIPSE"
     if style.get("rhombus"): return "DIAMOND"
     if style.get("rounded"): return "ROUND_RECTANGLE"
-    return "ROUND_RECTANGLE"
+    return "RECTANGLE"
 
 
 def _color(c: str | None, default: str = "#666666") -> str:
@@ -294,15 +294,17 @@ def drawio_xml_to_slides_requests(
         fill = _color(raw_fill, "#FFFFFF")
         stroke = _color(raw_stroke, "#999999")
         fcol = _color(st.get("fontColor"), "#333333")
-        orig_font = int(float(st.get("fontSize", "10") or "10"))
+        if fcol == "none": fcol = "#333333"
         is_dashed = st.get("dashed") == "1"
-        is_bold = st.get("fontStyle", "0") in ("1", "3", "5", "7")
+        font_style = int(st.get("fontStyle", "0") or "0")
+        is_bold = bool(font_style & 1)
+        is_italic = bool(font_style & 2)
         is_container = not v["label"] and v["w"] > 200 and v["h"] > 200
 
         w_in = v["w"] * scale
         h_in = v["h"] * scale
-        raw_sw = float(st.get("strokeWidth", "1.5"))
-        stroke_w = max(0.5, min(raw_sw * scale * 30, 3.0))
+        raw_sw = float(st.get("strokeWidth", "1") or "1")
+        stroke_w = max(0.5, min(raw_sw, 3.0))
 
         # Create shape
         requests.append({
@@ -358,21 +360,25 @@ def drawio_xml_to_slides_requests(
         if v["label"]:
             requests.append({"insertText": {"objectId": sid, "text": v["label"]}})
             fpt = fit_font(v["label"], w_in, h_in)
+            text_style: dict = {
+                "fontSize": {"magnitude": fpt, "unit": "PT"},
+                "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(fcol)}},
+                "bold": is_bold,
+            }
+            text_fields = "fontSize,foregroundColor,bold"
+            if is_italic:
+                text_style["italic"] = True
+                text_fields += ",italic"
             requests.append({
                 "updateTextStyle": {
-                    "objectId": sid,
-                    "style": {
-                        "fontSize": {"magnitude": fpt, "unit": "PT"},
-                        "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(fcol)}},
-                        "bold": is_bold,
-                    },
-                    "textRange": {"type": "ALL"},
-                    "fields": "fontSize,foregroundColor,bold",
+                    "objectId": sid, "style": text_style,
+                    "textRange": {"type": "ALL"}, "fields": text_fields,
                 }
             })
+            h_align = {"left": "START", "right": "END"}.get(st.get("align", ""), "CENTER")
             requests.append({
                 "updateParagraphStyle": {
-                    "objectId": sid, "style": {"alignment": "CENTER"},
+                    "objectId": sid, "style": {"alignment": h_align},
                     "textRange": {"type": "ALL"}, "fields": "alignment",
                 }
             })
@@ -388,8 +394,9 @@ def drawio_xml_to_slides_requests(
         estroke = _color(est.get("strokeColor"), "#666666")
         if estroke == "none": estroke = "#666666"
         earrow = "NONE" if est.get("endArrow") == "none" else "FILL_ARROW"
+        sarrow = "NONE" if est.get("startArrow", "none") == "none" else "FILL_ARROW"
         edash = est.get("dashed") == "1"
-        ew = max(0.75, min(float(est.get("strokeWidth", "1")), 2.0))
+        ew = max(0.75, min(float(est.get("strokeWidth", "1") or "1"), 2.0))
 
         requests.append({
             "createLine": {
@@ -417,8 +424,9 @@ def drawio_xml_to_slides_requests(
             "lineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(estroke)}, "alpha": 1.0}},
             "weight": {"magnitude": ew, "unit": "PT"},
             "endArrow": earrow,
+            "startArrow": sarrow,
         }
-        lf = "lineFill,weight,endArrow"
+        lf = "lineFill,weight,endArrow,startArrow"
         if edash:
             lp["dashStyle"] = "DASH"
             lf += ",dashStyle"

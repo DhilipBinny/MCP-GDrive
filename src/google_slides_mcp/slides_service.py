@@ -813,13 +813,13 @@ def add_section_slide(
     if section_number:
         nid = _new_id()
         reqs.extend(_text_box_reqs(nid, slide_id, section_number, L["number"],
-            font=FONTS["body"], size=18, color="#B0B0B0",
+            font=FONTS["body"], size=18, color=pal["white"],
             alignment="START", line_spacing=115))
 
     tid = _new_id()
     reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
         font=FONTS["heading"], size=FONT_SIZES["section_title"],
-        color=pal["primary_text"], bold=True, alignment="START", line_spacing=115))
+        color=pal["white"], bold=True, alignment="START", line_spacing=115))
 
     # Accent underline
     lid = _new_id()
@@ -2103,19 +2103,22 @@ def align_elements(
         })
 
     if len(elements) < 2:
-        return {"aligned": 0, "reason": "Need at least 2 elements"}
+        return {"aligned": 0, "mode": mode, "total_elements": len(elements)}
 
     reqs: list[dict] = []
     adjusted = 0
 
     if mode == "auto":
-        row_tolerance = CANVAS_H * 0.04
-        rows: dict[int, list] = {}
-        for e in elements:
-            bucket = int(e["cy"] / row_tolerance)
-            rows.setdefault(bucket, []).append(e)
+        row_tolerance = CANVAS_H * 0.03
+        sorted_elems = sorted(elements, key=lambda e: e["cy"])
+        rows: list[list] = [[sorted_elems[0]]]
+        for e in sorted_elems[1:]:
+            if abs(e["cy"] - rows[-1][-1]["cy"]) <= row_tolerance:
+                rows[-1].append(e)
+            else:
+                rows.append([e])
 
-        for bucket, row_elems in rows.items():
+        for row_elems in rows:
             if len(row_elems) < 2:
                 continue
             median_y = sorted(e["y"] for e in row_elems)[len(row_elems) // 2]
