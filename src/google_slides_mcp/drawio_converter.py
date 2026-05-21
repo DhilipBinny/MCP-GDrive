@@ -24,7 +24,7 @@ SHAPE_INSET = 0.05  # inches — 3.6pt per side
 # Content area matching design.py (TITLE_ONLY layout)
 MARGIN_LR = 0.75   # left/right margins
 MARGIN_TB = 0.35    # top/bottom margins for diagram
-TITLE_RESERVE = 1.0 # space reserved for TITLE_ONLY placeholder
+TITLE_RESERVE = 1.05 # title box (0.83") + gap to body (0.22")
 
 MIN_FONT_PT = 6
 MAX_FONT_PT = 14

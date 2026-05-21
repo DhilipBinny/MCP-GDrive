@@ -569,23 +569,51 @@ def import_drawio(
     drawio_xml: str,
     title: str = "",
 ) -> dict:
-    """Import a draw.io diagram (mxGraph XML) as native Slides shapes."""
+    """Import a draw.io diagram (mxGraph XML) as native Slides shapes.
+
+    Uses BLANK layout + custom title text box for consistent positioning
+    and maximum diagram space (no fixed-height TITLE placeholder).
+    """
+    from .design import LAYOUT, FONTS, FONT_SIZES
+    from shared.utils import hex_to_rgb
     service = _get_service()
     slide_id = _new_id()
     title_id = _new_id()
+    pal = _resolve_palette(presentation_id)
 
     create_reqs: list[dict] = [{
         "createSlide": {
             "objectId": slide_id,
-            "slideLayoutReference": {"predefinedLayout": "BLANK" if not title else "TITLE_ONLY"},
-            "placeholderIdMappings": (
-                [{"layoutPlaceholder": {"type": "TITLE", "index": 0}, "objectId": title_id}]
-                if title else []
-            ),
+            "slideLayoutReference": {"predefinedLayout": "BLANK"},
         }
     }]
+
     if title:
+        L = LAYOUT["content"]["title"]
+        create_reqs.append({
+            "createShape": {
+                "objectId": title_id, "shapeType": "TEXT_BOX",
+                "elementProperties": {
+                    "pageObjectId": slide_id,
+                    "size": _emu_size(L["w"], L["h"]),
+                    "transform": _emu_transform(L["x"], L["y"]),
+                },
+            }
+        })
         create_reqs.append({"insertText": {"objectId": title_id, "text": title}})
+        create_reqs.append({
+            "updateTextStyle": {
+                "objectId": title_id,
+                "style": {
+                    "fontFamily": FONTS["heading"],
+                    "fontSize": {"magnitude": FONT_SIZES["slide_title"], "unit": "PT"},
+                    "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(pal["primary_text"])}},
+                    "bold": True,
+                },
+                "textRange": {"type": "ALL"},
+                "fields": "fontFamily,fontSize,foregroundColor,bold",
+            }
+        })
 
     execute_with_retry(
         service.presentations().batchUpdate(
@@ -611,6 +639,11 @@ def import_drawio(
         "shapes": len([r for r in shape_reqs if "createShape" in r]),
         "connectors": len([r for r in shape_reqs if "createLine" in r]),
     }
+
+
+def _resolve_palette(presentation_id: str) -> dict:
+    from .design import get_palette
+    return get_palette(_resolve_theme(presentation_id, None))
 
 
 def _summarize_slide(slide: dict) -> dict:
@@ -1730,6 +1763,7 @@ def audit_styles(presentation_id: str) -> dict:
     colors = {}
     tables = []
     overflow_shapes = []
+    misaligned_slides = []
     slide_count = len(pres.get("slides", []))
 
     title_positions = []
@@ -1767,14 +1801,16 @@ def audit_styles(presentation_id: str) -> dict:
             has_bold = False
             has_heading_font = False
             elem_text = ""
+            text_runs: list[tuple[str, float]] = []
 
             for te in shape.get("text", {}).get("textElements", []):
                 tr = te.get("textRun", {})
-                content = tr.get("content", "").strip() if tr else ""
-                if not content:
+                content = tr.get("content", "") if tr else ""
+                stripped = content.strip()
+                if not stripped:
                     continue
                 has_content = True
-                elem_text += content + " "
+                elem_text += stripped + "\n"
                 ts = tr.get("style", {})
                 ff = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
                 if ff:
@@ -1785,7 +1821,8 @@ def audit_styles(presentation_id: str) -> dict:
                 if fs:
                     sizes[fs] = sizes.get(fs, 0) + 1
                     max_font_in_elem = max(max_font_in_elem, fs)
-                    if fs <= 9 and len(content) <= 4 and content.isdigit():
+                    text_runs.append((stripped, fs))
+                    if fs <= 9 and len(stripped) <= 4 and stripped.isdigit():
                         has_page_num = True
                 if ts.get("bold"):
                     has_bold = True
@@ -1814,23 +1851,23 @@ def audit_styles(presentation_id: str) -> dict:
                     "score": score, "placeholder": is_placeholder,
                 })
 
-                # Text overflow detection — compare text width against shape width
+                # Text overflow — check each text run against shape width
                 elem_size = elem.get("size", {})
                 scale_x = abs(transform.get("scaleX", 1))
-                scale_y = abs(transform.get("scaleY", 1))
                 shape_w_emu = elem_size.get("width", {}).get("magnitude", 0) * scale_x
-                shape_h_emu = elem_size.get("height", {}).get("magnitude", 0) * scale_y
-                if shape_w_emu > 0 and max_font_in_elem > 0:
+                if shape_w_emu > 0 and text_runs:
                     text_area_w_pt = max(0, (shape_w_emu - 2 * SHAPE_INSET_EMU)) / EMU_PER_PT
-                    rendered_w_pt = estimate_text_width_pt(elem_text.strip(), max_font_in_elem)
-                    if rendered_w_pt > text_area_w_pt and text_area_w_pt > 0:
-                        overflow_shapes.append({
-                            "slide": slide_num, "id": obj_id,
-                            "text": elem_text.strip()[:30],
-                            "font_pt": int(max_font_in_elem),
-                            "text_w_pt": int(rendered_w_pt),
-                            "shape_w_pt": int(text_area_w_pt),
-                        })
+                    for run_text, run_font in text_runs:
+                        run_w = estimate_text_width_pt(run_text, run_font)
+                        if run_w > text_area_w_pt > 0:
+                            overflow_shapes.append({
+                                "slide": slide_num, "id": obj_id,
+                                "text": run_text[:30],
+                                "font_pt": int(run_font),
+                                "text_w_pt": int(run_w),
+                                "shape_w_pt": int(text_area_w_pt),
+                            })
+                            break
 
             if table:
                 has_content = True
@@ -1841,8 +1878,14 @@ def audit_styles(presentation_id: str) -> dict:
                     if bg.get("solidFill"):
                         has_header_bg = True
                         break
-                table_w_emu = elem.get("size", {}).get("width", {}).get("magnitude", 0)
-                table_w_emu *= abs(transform.get("scaleX", 1))
+                col_widths = [
+                    col.get("columnWidth", {}).get("magnitude", 0)
+                    for col in table.get("tableColumns", [])
+                ]
+                table_w_emu = sum(col_widths) if col_widths else (
+                    elem.get("size", {}).get("width", {}).get("magnitude", 0)
+                    * abs(transform.get("scaleX", 1))
+                )
                 width_pct = (table_w_emu / CONTENT["w"] * 100) if CONTENT["w"] else 0
                 tables.append({
                     "slide": slide_num,
@@ -1885,6 +1928,27 @@ def audit_styles(presentation_id: str) -> dict:
         if has_footer:
             footer_slides.add(slide_num)
 
+        # Alignment check: find elements at similar Y that aren't exactly aligned
+        elem_ys = []
+        for elem in slide.get("pageElements", []):
+            t = elem.get("transform", {})
+            ey = t.get("translateY", 0)
+            if ey > 0:
+                elem_ys.append(ey)
+        if len(elem_ys) >= 3:
+            near_threshold = CANVAS_H * 0.03
+            exact_threshold = CANVAS_H * 0.002
+            elem_ys.sort()
+            for i in range(len(elem_ys)):
+                for j in range(i + 1, len(elem_ys)):
+                    diff = abs(elem_ys[i] - elem_ys[j])
+                    if exact_threshold < diff < near_threshold:
+                        misaligned_slides.append(slide_num)
+                        break
+                else:
+                    continue
+                break
+
     issues = []
 
     if len(fonts) > 2:
@@ -1926,6 +1990,13 @@ def audit_styles(presentation_id: str) -> dict:
             overflow_by_slide[ov["slide"]] = overflow_by_slide.get(ov["slide"], 0) + 1
         overflow_summary = ", ".join(f"slide {s} ({c} shapes)" for s, c in sorted(overflow_by_slide.items())[:8])
         issues.append(f"Text overflow in {len(overflow_shapes)} shapes: {overflow_summary}")
+
+    if misaligned_slides:
+        unique_mis = sorted(set(misaligned_slides))
+        if len(unique_mis) <= 5:
+            issues.append(f"Near-misaligned elements on slides: {', '.join(str(s) for s in unique_mis)}")
+        else:
+            issues.append(f"Near-misaligned elements on {len(unique_mis)} slides (first 5: {', '.join(str(s) for s in unique_mis[:5])})")
 
     narrow_tables = [t for t in tables if t.get("width_pct", 100) < 85]
     if narrow_tables:
