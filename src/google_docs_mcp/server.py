@@ -311,7 +311,7 @@ def gdocs_write(
                         idx = content.find(find, pos)
                         if idx == -1:
                             break
-                        doc_start = elem_start + idx
+                        doc_start = elem_start + utf16_len(content[:idx])
                         doc_end = doc_start + utf16_len(find)
                         if doc_start >= range_start and doc_end <= range_end:
                             hits.append((doc_start, doc_end))
@@ -439,11 +439,12 @@ def gdocs_write(
         if not image_url:
             return "ERROR: image_url is required for insert_image action"
         index = None
-        if before_heading:
-            boundaries = docs_service.get_section_boundaries(document_id, before_heading)
+        heading = before_heading or after_heading
+        if heading:
+            boundaries = docs_service.get_section_boundaries(document_id, heading)
             if not boundaries:
-                return f"ERROR: Heading '{before_heading}' not found"
-            index = boundaries["heading_start"]
+                return f"ERROR: Heading '{heading}' not found"
+            index = boundaries["heading_start"] if before_heading else boundaries["content_end"] - 1
         result = docs_service.insert_inline_image(document_id, image_url, index, width_pt, height_pt)
         return f"Inserted image (object: `{result['object_id']}`)"
 
