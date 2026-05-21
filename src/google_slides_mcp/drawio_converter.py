@@ -12,7 +12,7 @@ import json
 import uuid
 import xml.etree.ElementTree as ET
 
-from shared.utils import hex_to_rgb
+from shared.utils import hex_to_rgb, estimate_text_width_pt, estimate_text_height_pt
 
 EMU_PER_INCH = 914400
 SLIDE_W_IN = 10.0
@@ -26,9 +26,6 @@ MARGIN_LR = 0.75   # left/right margins
 MARGIN_TB = 0.35    # top/bottom margins for diagram
 TITLE_RESERVE = 1.0 # space reserved for TITLE_ONLY placeholder
 
-# Font metrics for proportional fonts (Open Sans / Arial)
-CHAR_W_RATIO = 0.52  # avg char width as fraction of font_pt
-LINE_H_RATIO = 1.35  # line height as fraction of font_pt
 MIN_FONT_PT = 6
 MAX_FONT_PT = 14
 
@@ -264,17 +261,18 @@ def drawio_xml_to_slides_requests(
         return emu((y - min_y) * scale + oy)
 
     def fit_font(label: str, shape_w_in: float, shape_h_in: float) -> int:
-        """Calculate font size that fits text inside shape, accounting for Slides padding."""
+        """Binary search for largest font where text fits inside shape padding."""
         if not label: return 10
-        text_w = max(0.1, (shape_w_in - 2 * SHAPE_INSET)) * 72  # pt
-        text_h = max(0.1, (shape_h_in - 2 * SHAPE_INSET)) * 72  # pt
-        lines = label.split("\n")
-        max_chars = max(len(l) for l in lines) if lines else 1
-        num_lines = len(lines)
-        if max_chars == 0: return 10
-        fw = text_w / (max_chars * CHAR_W_RATIO) if max_chars > 0 else 20
-        fh = text_h / (num_lines * LINE_H_RATIO) if num_lines > 0 else 20
-        return max(MIN_FONT_PT, min(int(min(fw, fh)), MAX_FONT_PT))
+        avail_w = max(0.1, (shape_w_in - 2 * SHAPE_INSET)) * 72
+        avail_h = max(0.1, (shape_h_in - 2 * SHAPE_INSET)) * 72
+        best = MIN_FONT_PT
+        for candidate in range(MAX_FONT_PT, MIN_FONT_PT - 1, -1):
+            tw = estimate_text_width_pt(label, candidate)
+            th = estimate_text_height_pt(label, candidate)
+            if tw <= avail_w and th <= avail_h:
+                best = candidate
+                break
+        return best
 
     requests: list[dict] = []
     node_map: dict[str, str] = {}
