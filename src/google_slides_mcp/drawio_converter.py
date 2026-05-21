@@ -45,7 +45,9 @@ def _clean(val: str | None) -> str:
     if not val: return ""
     t = val.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", '"').replace("&#xa;", "\n").replace("&nbsp;", " ")
     t = re.sub(r"<br\s*/?>", "\n", t, flags=re.IGNORECASE)
-    return re.sub(r"<[^>]+>", "", t).strip()
+    t = re.sub(r"<[^>]+>", "", t)
+    t = t.replace("\\n", "\n")
+    return t.strip()
 
 
 def _shape_type(style: dict) -> str:
@@ -249,15 +251,15 @@ def drawio_xml_to_slides_requests(
 
     def fit_font(label: str, shape_w_in: float, shape_h_in: float, original_pt: int) -> int:
         if not label: return original_pt
-        pad_w = shape_w_in * 0.85
-        pad_h = shape_h_in * 0.80
+        pad_w = shape_w_in * 0.88
+        pad_h = shape_h_in * 0.85
         lines = label.split("\n")
         max_line = max(len(l) for l in lines) if lines else 1
         num_lines = len(lines)
         if max_line == 0: return original_pt
-        fw = (pad_w * 72) / (max_line * 0.62) if max_line > 0 else 20
-        fh = (pad_h * 72) / (num_lines * 1.4) if num_lines > 0 else 20
-        return max(2, min(int(min(fw, fh)), 14))
+        fw = (pad_w * 72) / (max_line * 0.55) if max_line > 0 else 20
+        fh = (pad_h * 72) / (num_lines * 1.35) if num_lines > 0 else 20
+        return max(5, min(int(min(fw, fh)), 14))
 
     requests: list[dict] = []
     node_map: dict[str, str] = {}
