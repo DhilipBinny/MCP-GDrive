@@ -150,6 +150,21 @@ PALETTES = {
 
 DEFAULT_PALETTE = "modern"
 
+# 60/30/10 role mapping (same keys across all palettes):
+#   60% (dominant):  "background"
+#   30% (secondary): "surface", "secondary_text", "divider"
+#   10% (accent):    "accent" — used for headings, table headers, CTAs
+#   Text:            "primary_text" on background, "white" on accent
+#   Data viz:        "diagram_series" (up to 6 colors, accent-first)
+
+PALETTE_ROLES = {
+    "dominant": "background",
+    "secondary": "surface",
+    "accent": "accent",
+    "text_on_bg": "primary_text",
+    "text_on_accent": "white",
+}
+
 
 def get_palette(name: str | None = None) -> dict:
     return PALETTES.get(name or DEFAULT_PALETTE, PALETTES[DEFAULT_PALETTE])

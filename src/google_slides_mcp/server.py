@@ -39,12 +39,14 @@ DESIGN RULES (always follow):
 - Titles are TAKEAWAYS ("Revenue grew 23%") not TOPICS ("Revenue Analysis").
 - Max 6 bullets, 8 words/bullet, 40 words/slide body.
 - Max 2 font families per deck. Third only for code blocks.
-- 60/30/10 color ratio: 60% background, 30% secondary, 10% accent. ONE accent color.
-- Light bg: text #202124 or darker. Dark bg: text #F5F5F7 or lighter.
-- Table: max 8 rows, 6 cols. Header uses deck accent color.
+- COLOR PALETTE — follow the 60/30/10 rule strictly:
+  - 60% background (dominant neutral), 30% secondary (surface/text), 10% accent (ONE color for CTAs/highlights).
+  - Light bg: text #202124 or darker. Dark bg: text #F5F5F7 or lighter. WCAG 4.5:1 contrast minimum.
+  - NEVER invent new colors. Use the deck theme palette (set_theme). Override only when user specifies.
+  - Mood mapping: "trust/corporate" → blue, "growth/success" → green, "energy/urgency" → orange/red, "luxury/calm" → muted earth tones.
+  - Table headers use the deck accent color. Alternating rows use the surface color.
 - At least 40% whitespace per slide. If it looks full, split it.
 - NEVER below 12pt for visible text. 9pt only for page numbers.
-- If user doesn't specify colors, inherit from deck theme. Don't invent new colors.
 - For visual diagrams (flows, architectures), ALWAYS use gslides_import(format="drawio").
 """,
 )
@@ -586,9 +588,10 @@ def gslides_analyze(
     Look for: too many fonts (keep ≤2), unstyled tables, tiny text (<9pt).
 
     MODE 2 — Recommend (provide content_type):
-    Returns suggested font sizes, colors, spacing for a slide type.
+    Returns suggested font sizes, color palette guidance (60/30/10), spacing for a slide type.
     Use before gslides_add_slide to get the right styling values.
     Adjusts recommendations based on audience (keynote=larger, technical=smaller).
+    Includes mood-based palette advice and theme recommendations.
 
     Args:
         presentation_id: Presentation to audit (mode 1)
@@ -625,12 +628,30 @@ def gslides_analyze(
         if text_length > 300: b["body"] = max(b["body"] - 2, 12)
         elif text_length < 100: b["body"] = min(b["body"] + 2, 24)
 
+        mood_map = {
+            "keynote": "Bold, confident. Use high-contrast accent for key messages.",
+            "business": "Professional, trustworthy. Blue/navy accent conveys authority.",
+            "technical": "Clean, precise. Minimal accent usage. Let content breathe.",
+            "academic": "Scholarly, neutral. Muted tones. Accent only for data highlights.",
+        }
+        palette_guide = mood_map.get(audience, mood_map["business"])
+
         return f"""## Recommended: {content_type} ({audience})
-**Fonts:** Heading: Montserrat, Body: Open Sans, Code: Roboto Mono
+**Fonts:** Heading: Montserrat | Body: Open Sans | Code: Roboto Mono
 **Title:** {b['title']}pt bold  |  **Body:** {b['body']}pt
 **Table:** header {b['table_h']}pt bold, values {b['table_v']}pt
 **Spacing:** line {130 if audience == 'business' else 120}%, bullet gap 6pt
-**Colors:** Light bg text: #202124. Dark bg text: #F5F5F7. Use set_theme or explicit colors."""
+
+**Color Palette (60/30/10 rule):**
+- 60% — Background: use deck theme background (white/dark). Dominant, calming.
+- 30% — Secondary: surface color for cards, alt-rows, subtle sections.
+- 10% — Accent: ONE color for headings, table headers, CTAs, key highlights.
+- Text: auto-contrast — dark text on light bg (#202124), light on dark (#F5F5F7).
+- Mood: {palette_guide}
+
+**Available themes:** modern (blue), corporate (navy), dark (deep blue), warm (earth tones).
+Set once with gslides_manage(action="set_theme") — all slides inherit it.
+Never invent custom colors. Use the theme palette or user-specified brand color."""
 
     return "ERROR: Provide either presentation_id (audit) or content_type (recommend)"
 
