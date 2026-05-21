@@ -611,34 +611,62 @@ def gdocs_update_table_cell(
 
 @mcp.tool()
 @_handle_errors
-def gdrive_move(file_id: str, folder_id: str) -> str:
-    """Move a file to a different Drive folder. Works with Docs, Sheets, Slides, or any Drive file.
+def gdocs_insert_image(
+    document_id: str,
+    image_url: str,
+    width_pt: float | None = None,
+    height_pt: float | None = None,
+    before_heading: str | None = None,
+) -> str:
+    """Insert an inline image from a public URL into a Google Doc.
+
+    The image URL must be publicly accessible. For private images, first upload
+    to Drive with gdrive_upload, then share with gdrive_share to get a public URL.
 
     Args:
-        file_id: The file ID (Google Doc, Sheet, Slide, or any Drive file)
-        folder_id: Target folder ID in Google Drive
+        document_id: The Google Doc ID
+        image_url: Publicly accessible image URL (PNG, JPEG, GIF; max 50MB)
+        width_pt: Optional width in points (72pt = 1 inch)
+        height_pt: Optional height in points
+        before_heading: Optional — insert before this heading instead of at end
     """
-    result = drive_service.move_file(file_id, folder_id)
-    return f"Moved **{result['name']}** to folder `{folder_id}`\n- URL: {result['url']}"
+    index = None
+    if before_heading:
+        boundaries = docs_service.get_section_boundaries(document_id, before_heading)
+        if not boundaries:
+            return f"ERROR: Heading '{before_heading}' not found"
+        index = boundaries["heading_start"]
+
+    result = docs_service.insert_inline_image(document_id, image_url, index, width_pt, height_pt)
+    return f"Inserted image (object: `{result['object_id']}`)"
 
 
 @mcp.tool()
 @_handle_errors
-def gdrive_delete(file_id: str, confirm: bool = False) -> str:
-    """DESTRUCTIVE: Move a file to trash. Works with Docs, Sheets, Slides, or any Drive file.
+def gdocs_page_setup(
+    document_id: str,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+) -> str:
+    """Update document margins. Values in points (72pt = 1 inch).
 
-    The file is moved to Google Drive trash (recoverable for 30 days).
-    You MUST set confirm=true to proceed. Always ask the user for
-    explicit permission before calling this tool.
+    Common presets: Normal margins = 72pt all sides. Narrow = 36pt.
 
     Args:
-        file_id: The file ID to delete (Google Doc, Sheet, Slide, or any Drive file)
-        confirm: Must be true to proceed — safety guard against accidental deletion
+        document_id: The Google Doc ID
+        margin_top: Top margin in points
+        margin_bottom: Bottom margin in points
+        margin_left: Left margin in points
+        margin_right: Right margin in points
     """
-    if not confirm:
-        return "REFUSED: confirm must be set to true. Please ask the user to confirm deletion first."
-    result = drive_service.trash_file(file_id)
-    return f"Trashed **{result['name']}** (`{result['id']}`). Recoverable from Google Drive trash for 30 days."
+    result = docs_service.update_document_style(
+        document_id, margin_top, margin_bottom, margin_left, margin_right
+    )
+    if not result:
+        return "ERROR: No margin values provided"
+    return f"Updated margins: {', '.join(result['updated_fields'])}"
 
 
 # ── Google Drive Tools ─────────────────────────────────────────────
@@ -680,6 +708,154 @@ def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> s
         icon = "\U0001f4c1" if "folder" in f["mime_type"] else "\U0001f4c4"
         lines.append(f"- {icon} **{f['name']}** (`{f['id']}`)\n  {f['mime_type']} | {f['modified']}")
     return "\n".join(lines)
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_move(file_id: str, folder_id: str) -> str:
+    """Move a file to a different Drive folder.
+
+    Args:
+        file_id: The file ID
+        folder_id: Target folder ID
+    """
+    result = drive_service.move_file(file_id, folder_id)
+    return f"Moved **{result['name']}** to folder `{folder_id}`\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_delete(file_id: str, confirm: bool = False) -> str:
+    """DESTRUCTIVE: Move a file to trash (recoverable 30 days). Requires confirm=true.
+
+    Args:
+        file_id: The file ID to delete
+        confirm: Must be true to proceed
+    """
+    if not confirm:
+        return "REFUSED: confirm must be true. Ask the user first."
+    result = drive_service.trash_file(file_id)
+    return f"Trashed **{result['name']}** (`{result['id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_get_info(file_id: str) -> str:
+    """Get file metadata — name, type, size, owner, sharing status.
+
+    Args:
+        file_id: The file ID
+    """
+    r = drive_service.get_file_info(file_id)
+    size = f"{int(r['size']):,} bytes" if r["size"] else "N/A (Google Workspace file)"
+    lines = [
+        f"**{r['name']}**",
+        f"- ID: `{r['id']}`",
+        f"- Type: {r['mime_type']}",
+        f"- Size: {size}",
+        f"- Owner: {', '.join(r['owners'])}",
+        f"- Shared: {r['shared']}",
+        f"- Created: {r['created']}",
+        f"- Modified: {r['modified']}",
+        f"- URL: {r['url']}",
+    ]
+    return "\n".join(lines)
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_create_folder(name: str, parent_id: str | None = None) -> str:
+    """Create a new folder in Google Drive.
+
+    Args:
+        name: Folder name
+        parent_id: Optional parent folder ID (omit for root)
+    """
+    result = drive_service.create_folder(name, parent_id)
+    return f"Created folder **{result['name']}** (`{result['id']}`)\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_upload(local_path: str, folder_id: str | None = None, name: str | None = None) -> str:
+    """Upload a local file to Google Drive.
+
+    Args:
+        local_path: Path to the local file
+        folder_id: Optional target folder ID
+        name: Optional name override (default: original filename)
+    """
+    result = drive_service.upload_file(local_path, name, folder_id)
+    return f"Uploaded **{result['name']}** (`{result['id']}`)\n- Type: {result['mime_type']}\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_export(
+    file_id: str,
+    format: Literal["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md", "rtf", "png", "jpg", "svg"],
+    output_path: str | None = None,
+) -> str:
+    """Export a Google Workspace file to a local format.
+
+    Supported: pdf, docx, xlsx, pptx, csv, txt, md, rtf, png, jpg, svg.
+    Max export size: 10MB.
+
+    Args:
+        file_id: The Google Workspace file ID (Doc, Sheet, or Slides)
+        format: Export format
+        output_path: Optional output path (default: filename.format in current dir)
+    """
+    result = drive_service.export_file(file_id, format, output_path)
+    size_kb = result["size"] / 1024
+    return f"Exported to **{result['path']}** ({size_kb:.1f} KB)"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_copy(file_id: str, name: str | None = None, folder_id: str | None = None) -> str:
+    """Copy a file (useful for template workflows).
+
+    Args:
+        file_id: The file ID to copy
+        name: Optional name for the copy
+        folder_id: Optional folder to place the copy in
+    """
+    result = drive_service.copy_file(file_id, name, folder_id)
+    return f"Copied to **{result['name']}** (`{result['id']}`)\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_share(
+    file_id: str,
+    email: str | None = None,
+    role: Literal["reader", "writer", "commenter"] = "reader",
+    anyone: bool = False,
+) -> str:
+    """Share a file with a user or make it publicly accessible.
+
+    Args:
+        file_id: The file ID to share
+        email: Email address to share with (omit if using anyone=true)
+        role: Permission level — reader, writer, or commenter
+        anyone: Set true to make public (anyone with link)
+    """
+    result = drive_service.share_file(file_id, email, role, anyone)
+    return f"Shared with {result['shared_with']} as {result['role']}\n- Permission ID: `{result['permission_id']}`\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_rename(file_id: str, new_name: str) -> str:
+    """Rename a file or folder in Google Drive.
+
+    Args:
+        file_id: The file ID to rename
+        new_name: New name for the file
+    """
+    result = drive_service.rename_file(file_id, new_name)
+    return f"Renamed to **{result['name']}**"
 
 
 # ── Entry Point ────────────────────────────────────────────────────

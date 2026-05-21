@@ -97,6 +97,76 @@ def batch_update(document_id: str, requests: list[dict], preserve_order: bool = 
     return _batch_update(service, document_id, requests, preserve_order=preserve_order)
 
 
+def insert_inline_image(
+    document_id: str,
+    image_url: str,
+    index: int | None = None,
+    width_pt: float | None = None,
+    height_pt: float | None = None,
+) -> dict:
+    """Insert an inline image from a public URL."""
+    service = _get_service()
+    req: dict = {"uri": image_url}
+
+    if index is not None:
+        req["location"] = {"index": index}
+    else:
+        req["endOfSegmentLocation"] = {"segmentId": ""}
+
+    if width_pt or height_pt:
+        size = {}
+        if width_pt:
+            size["width"] = {"magnitude": width_pt, "unit": "PT"}
+        if height_pt:
+            size["height"] = {"magnitude": height_pt, "unit": "PT"}
+        req["objectSize"] = size
+
+    result = execute_with_retry(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={"requests": [{"insertInlineImage": req}]},
+        )
+    )
+    obj_id = result.get("replies", [{}])[0].get("insertInlineImage", {}).get("objectId", "")
+    return {"object_id": obj_id}
+
+
+def update_document_style(
+    document_id: str,
+    margin_top: float | None = None,
+    margin_bottom: float | None = None,
+    margin_left: float | None = None,
+    margin_right: float | None = None,
+) -> dict:
+    """Update document margins (in points, 72pt = 1 inch)."""
+    style: dict = {}
+    fields = []
+    if margin_top is not None:
+        style["marginTop"] = {"magnitude": margin_top, "unit": "PT"}
+        fields.append("marginTop")
+    if margin_bottom is not None:
+        style["marginBottom"] = {"magnitude": margin_bottom, "unit": "PT"}
+        fields.append("marginBottom")
+    if margin_left is not None:
+        style["marginLeft"] = {"magnitude": margin_left, "unit": "PT"}
+        fields.append("marginLeft")
+    if margin_right is not None:
+        style["marginRight"] = {"magnitude": margin_right, "unit": "PT"}
+        fields.append("marginRight")
+
+    if not fields:
+        return {}
+
+    service = _get_service()
+    execute_with_retry(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={"requests": [{"updateDocumentStyle": {"documentStyle": style, "fields": ",".join(fields)}}]},
+        )
+    )
+    return {"updated_fields": fields}
+
+
 def replace_all_text(document_id: str, find: str, replace: str) -> dict:
     service = _get_service()
     requests = [{

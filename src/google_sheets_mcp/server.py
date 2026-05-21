@@ -389,6 +389,142 @@ def gsheets_sort(
     return f"Sorted `{result['sorted_range']}` by column {result['sort_column']} ({direction})"
 
 
+@mcp.tool()
+@_handle_errors
+def gsheets_conditional_format(
+    spreadsheet_id: str,
+    range: str,
+    rule_type: str,
+    values: list[str] | None = None,
+    bg_color: str | None = None,
+    text_color: str | None = None,
+    bold: bool = False,
+    custom_formula: str | None = None,
+) -> str:
+    """Add conditional formatting to cells.
+
+    Rule types: NUMBER_GREATER, NUMBER_LESS, NUMBER_BETWEEN, TEXT_CONTAINS,
+    TEXT_NOT_CONTAINS, BLANK, NOT_BLANK, CUSTOM_FORMULA, and more.
+
+    Args:
+        spreadsheet_id: The spreadsheet ID
+        range: A1 notation range
+        rule_type: Condition type (e.g. "NUMBER_GREATER", "TEXT_CONTAINS", "CUSTOM_FORMULA")
+        values: Condition values (e.g. ["100"] for NUMBER_GREATER, ["URGENT"] for TEXT_CONTAINS)
+        bg_color: Background color hex for matching cells
+        text_color: Text color hex for matching cells
+        bold: Bold text in matching cells
+        custom_formula: Formula when rule_type is CUSTOM_FORMULA (e.g. "=$D2<TODAY()")
+    """
+    result = sheets_service.add_conditional_format(
+        spreadsheet_id, range, rule_type, values, bg_color, text_color, bold, custom_formula=custom_formula,
+    )
+    return f"Added {result['rule_type']} conditional format on `{result['range']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gsheets_data_validation(
+    spreadsheet_id: str,
+    range: str,
+    rule_type: str,
+    values: list[str] | None = None,
+    strict: bool = True,
+    input_message: str | None = None,
+) -> str:
+    """Set data validation on cells — dropdowns, number ranges, etc.
+
+    Common rule types:
+    - ONE_OF_LIST with values=["Option1", "Option2"] — dropdown
+    - NUMBER_BETWEEN with values=["0", "100"] — number range
+    - TEXT_IS_EMAIL — email validation
+    - DATE_AFTER with values=["2024-01-01"] — date validation
+
+    Args:
+        spreadsheet_id: The spreadsheet ID
+        range: A1 notation range
+        rule_type: Validation type (ONE_OF_LIST, NUMBER_BETWEEN, TEXT_IS_EMAIL, etc.)
+        values: Validation values
+        strict: Reject invalid input (true) or show warning only (false)
+        input_message: Tooltip shown to user
+    """
+    result = sheets_service.set_data_validation(
+        spreadsheet_id, range, rule_type, values, strict, input_message,
+    )
+    return f"Set {result['rule_type']} validation on `{result['range']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gsheets_merge(
+    spreadsheet_id: str,
+    range: str,
+    merge_type: Literal["MERGE_ALL", "MERGE_COLUMNS", "MERGE_ROWS"] = "MERGE_ALL",
+) -> str:
+    """Merge cells in a range.
+
+    Args:
+        spreadsheet_id: The spreadsheet ID
+        range: A1 notation range to merge (e.g. "A1:C1" for header spanning)
+        merge_type: MERGE_ALL (single cell), MERGE_COLUMNS, or MERGE_ROWS
+    """
+    result = sheets_service.merge_cells(spreadsheet_id, range, merge_type)
+    return f"Merged `{result['merged_range']}` ({result['merge_type']})"
+
+
+@mcp.tool()
+@_handle_errors
+def gsheets_unmerge(spreadsheet_id: str, range: str) -> str:
+    """Unmerge previously merged cells.
+
+    Args:
+        spreadsheet_id: The spreadsheet ID
+        range: A1 notation range to unmerge
+    """
+    result = sheets_service.unmerge_cells(spreadsheet_id, range)
+    return f"Unmerged `{result['unmerged_range']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gsheets_borders(
+    spreadsheet_id: str,
+    range: str,
+    style: Literal["SOLID", "SOLID_MEDIUM", "SOLID_THICK", "DASHED", "DOTTED", "DOUBLE"] = "SOLID",
+    color: str = "#000000",
+    edges: str = "all",
+) -> str:
+    """Add borders to cells.
+
+    Args:
+        spreadsheet_id: The spreadsheet ID
+        range: A1 notation range
+        style: Border style
+        color: Border color hex
+        edges: Which edges — all, outer, inner, top, bottom, left, right
+    """
+    result = sheets_service.add_borders(spreadsheet_id, range, style, color, edges=edges)
+    return f"Added {edges} borders on `{result['bordered_range']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gsheets_duplicate_sheet(
+    spreadsheet_id: str,
+    sheet_name: str,
+    new_name: str | None = None,
+) -> str:
+    """Duplicate (clone) a sheet tab.
+
+    Args:
+        spreadsheet_id: The spreadsheet ID
+        sheet_name: Name of the tab to duplicate
+        new_name: Optional name for the copy
+    """
+    result = sheets_service.duplicate_sheet(spreadsheet_id, sheet_name, new_name)
+    return f"Duplicated to **{result['title']}** (ID: {result['sheet_id']})"
+
+
 # ── Google Drive Tools (shared) ────────────────────────────────────
 
 
@@ -455,6 +591,73 @@ def gdrive_delete(file_id: str, confirm: bool = False) -> str:
         return "REFUSED: confirm must be true. Ask the user first."
     result = drive_service.trash_file(file_id)
     return f"Trashed **{result['name']}** (`{result['id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_upload(local_path: str, folder_id: str | None = None, name: str | None = None) -> str:
+    """Upload a local file to Google Drive.
+
+    Args:
+        local_path: Path to the local file
+        folder_id: Optional target folder ID
+        name: Optional name override
+    """
+    result = drive_service.upload_file(local_path, name, folder_id)
+    return f"Uploaded **{result['name']}** (`{result['id']}`)\n- Type: {result['mime_type']}\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_export(
+    file_id: str,
+    format: Literal["pdf", "docx", "xlsx", "pptx", "csv", "txt", "md"],
+    output_path: str | None = None,
+) -> str:
+    """Export a Google Workspace file to a local format. Max 10MB.
+
+    Args:
+        file_id: The Google Workspace file ID
+        format: Export format (pdf, docx, xlsx, pptx, csv, txt, md)
+        output_path: Optional output path
+    """
+    result = drive_service.export_file(file_id, format, output_path)
+    size_kb = result["size"] / 1024
+    return f"Exported to **{result['path']}** ({size_kb:.1f} KB)"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_copy(file_id: str, name: str | None = None, folder_id: str | None = None) -> str:
+    """Copy a file (for template workflows).
+
+    Args:
+        file_id: The file ID to copy
+        name: Optional name for the copy
+        folder_id: Optional folder for the copy
+    """
+    result = drive_service.copy_file(file_id, name, folder_id)
+    return f"Copied to **{result['name']}** (`{result['id']}`)\n- URL: {result['url']}"
+
+
+@mcp.tool()
+@_handle_errors
+def gdrive_share(
+    file_id: str,
+    email: str | None = None,
+    role: Literal["reader", "writer", "commenter"] = "reader",
+    anyone: bool = False,
+) -> str:
+    """Share a file with a user or make it public.
+
+    Args:
+        file_id: The file ID
+        email: Email to share with (omit if anyone=true)
+        role: Permission level
+        anyone: Make public (anyone with link)
+    """
+    result = drive_service.share_file(file_id, email, role, anyone)
+    return f"Shared with {result['shared_with']} as {result['role']}\n- URL: {result['url']}"
 
 
 # ── Entry Point ────────────────────────────────────────────────────

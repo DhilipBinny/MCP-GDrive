@@ -6,52 +6,59 @@ from shared.utils import utf16_len
 from . import docs_service
 
 
-def highlight_text(document_id: str, search_text: str, color: dict) -> dict:
-    """Find text in doc and apply background highlight color.
-
-    Uses actual document element indices instead of string.find() to correctly
-    handle documents with tables (which occupy index space).
-    """
-    doc_data = docs_service.read_document_raw(document_id)
-    tabs = doc_data.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc_data.get("body", {})
-
-    requests = []
-    count = 0
-
-    for elem in body.get("content", []):
-        para = elem.get("paragraph")
-        if not para:
-            continue
+def _search_text_runs(paragraphs: list[dict], search_text: str) -> list[tuple[int, int]]:
+    """Search text runs in paragraph elements, return list of (doc_start, doc_end) hits."""
+    hits = []
+    for para in paragraphs:
         for pe in para.get("elements", []):
             tr = pe.get("textRun")
             if not tr:
                 continue
             content = tr.get("content", "")
             elem_start = pe.get("startIndex", 0)
-            start = 0
+            pos = 0
             while True:
-                idx = content.find(search_text, start)
+                idx = content.find(search_text, pos)
                 if idx == -1:
                     break
                 doc_start = elem_start + idx
                 doc_end = doc_start + utf16_len(search_text)
-                requests.append({
-                    "updateTextStyle": {
-                        "range": {"startIndex": doc_start, "endIndex": doc_end},
-                        "textStyle": {
-                            "backgroundColor": {"color": {"rgbColor": color}}
-                        },
-                        "fields": "backgroundColor",
-                    }
-                })
-                count += 1
-                start = idx + len(search_text)
+                hits.append((doc_start, doc_end))
+                pos = idx + len(search_text)
+    return hits
+
+
+def highlight_text(document_id: str, search_text: str, color: dict) -> dict:
+    """Find text in doc (paragraphs + table cells) and apply background highlight."""
+    doc_data = docs_service.read_document_raw(document_id)
+    tabs = doc_data.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc_data.get("body", {})
+
+    all_hits = []
+    for elem in body.get("content", []):
+        if "paragraph" in elem:
+            all_hits.extend(_search_text_runs([elem["paragraph"]], search_text))
+        elif "table" in elem:
+            for row in elem["table"].get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    for ce in cell.get("content", []):
+                        if "paragraph" in ce:
+                            all_hits.extend(_search_text_runs([ce["paragraph"]], search_text))
+
+    requests = []
+    for doc_start, doc_end in all_hits:
+        requests.append({
+            "updateTextStyle": {
+                "range": {"startIndex": doc_start, "endIndex": doc_end},
+                "textStyle": {"backgroundColor": {"color": {"rgbColor": color}}},
+                "fields": "backgroundColor",
+            }
+        })
 
     if requests:
         docs_service.batch_update(document_id, requests)
 
-    return {"occurrences_highlighted": count}
+    return {"occurrences_highlighted": len(all_hits)}
 
 
 def cleanup_document(document_id: str) -> dict:

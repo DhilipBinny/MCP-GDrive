@@ -863,6 +863,28 @@ def _summarize_slide(slide: dict) -> dict:
     return {"slide_id": slide_id, "elements": elements}
 
 
+def get_slide_thumbnail(
+    presentation_id: str,
+    slide_id: str,
+    size: str = "LARGE",
+) -> dict:
+    """Get a temporary thumbnail URL for a slide (expires in ~30 minutes)."""
+    service = _get_service()
+    result = execute_with_retry(
+        service.presentations().pages().getThumbnail(
+            presentationId=presentation_id,
+            pageObjectId=slide_id,
+            thumbnailProperties_thumbnailSize=size.upper(),
+            thumbnailProperties_mimeType="PNG",
+        )
+    )
+    return {
+        "url": result["contentUrl"],
+        "width": result.get("width", 0),
+        "height": result.get("height", 0),
+    }
+
+
 def _extract_text(text_elements: list) -> str:
     parts = []
     for te in text_elements:
