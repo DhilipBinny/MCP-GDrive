@@ -161,9 +161,10 @@ def get_palette(name: str | None = None) -> dict:
 # All positions respect 0.75" side margins, 0.5" top/bottom margins.
 # Title position is IDENTICAL on every content slide (flip test).
 
-_TITLE = {"x": 685_800, "y": 457_200, "w": 8_628_400, "h": 762_000}  # 60pt tall — fits 2-line titles at 26pt
-_BODY_Y = 1_371_600  # title bottom + 152,400 gap (12pt)
-_BODY_H = 3_486_150  # remaining to bottom margin
+# Title + body layout: clean white background, dark text
+_TITLE = {"x": 685_800, "y": 457_200, "w": 8_628_400, "h": 762_000}  # 60pt tall, fits 2-line titles at 26pt
+_BODY_Y = 1_371_600  # title bottom + 12pt gap
+_BODY_H = 3_486_150  # remaining to footer area
 
 LAYOUT = {
     "title_slide": {
@@ -207,12 +208,7 @@ LAYOUT = {
         "title": _TITLE,
         "table": {"x": 685_800, "y": _BODY_Y, "w": 8_628_400, "h": _BODY_H},
     },
-    "title_accent": {
-        "x": 685_800,
-        "y": 1_700_000,   # well below 2-line title bottom
-        "w": 1_524_000,
-        "weight": 2.5,
-    },
+    "footer_line_y": 4_953_000,
     "footer": {
         "x": 685_800, "y": 5_130_800, "w": 5_080_000, "h": 254_000,
     },
