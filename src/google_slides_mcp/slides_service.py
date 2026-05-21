@@ -165,9 +165,19 @@ def _polish_reqs(slide_id: str, pal: dict, presentation_id: str, service) -> lis
 
 
 def _auto_column_widths(headers: list[str], table_w: int) -> list[int]:
-    lengths = [max(len(h), 3) for h in headers]
+    MIN_COL = 600_000  # ~0.66 inches — prevents unreadably narrow columns
+    n = len(headers)
+    if n == 0:
+        return []
+    lengths = [max(len(h), 4) for h in headers]
     total = sum(lengths)
-    return [int(table_w * l / total) for l in lengths]
+    widths = [max(MIN_COL, int(table_w * l / total)) for l in lengths]
+    # Ensure widths sum exactly to table_w (absorb rounding into widest column)
+    diff = table_w - sum(widths)
+    if diff != 0:
+        widest = max(range(n), key=lambda i: widths[i])
+        widths[widest] += diff
+    return widths
 
 
 def create_presentation(title: str) -> dict:
