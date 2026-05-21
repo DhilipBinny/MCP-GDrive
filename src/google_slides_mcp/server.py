@@ -467,6 +467,7 @@ def gslides_manage(
     - "merge_table_cells" — merge cells (uses: table_id, row_index, col_index, row_span, col_span)
     - "list_layouts" — list available layouts in the deck (for from_layout slides)
     - "create_from_template" — copy a template deck, clear content, return clean deck with theme (uses: find as template_id, name, folder_id)
+    - "align" — align/distribute elements on a slide (uses: slide_id, operation=auto/align_left/align_center/align_right/align_top/align_middle/align_bottom/distribute_h/distribute_v)
     - "get_image_url" — extract image URL from an element (uses: element_id). Returns source_url + temporary content_url
     - "clone_slide" — copy slide within or across presentations (uses: slide_id, find=target_presentation_id, position). Cross-deck recreates all elements.
     - "copy_element" — copy element to another presentation (uses: element_id, find=source_presentation_id, slide_id=target_slide_id, image_url=target_presentation_id)
@@ -565,6 +566,12 @@ def gslides_manage(
             phs = ", ".join(f"{p['type']}[{p['index']}]" for p in l["placeholders"])
             lines.append(f"- **{l['name']}** `{l['layout_id']}` — {phs or 'none'}")
         return "\n".join(lines)
+    elif a == "align":
+        align_mode = operation.lower() if operation and operation.lower() != "bring_to_front" else "auto"
+        r = slides_service.align_elements(presentation_id, slide_id, align_mode)
+        if "error" in r:
+            return f"ERROR: {r['error']}"
+        return f"Aligned {r['aligned']} elements ({r['mode']}) on slide `{slide_id}`"
     elif a == "get_image_url":
         r = slides_service.get_image_url(presentation_id, element_id)
         if "error" in r:
