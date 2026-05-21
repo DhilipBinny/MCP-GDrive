@@ -1424,15 +1424,27 @@ def ungroup_elements(presentation_id: str, group_ids: list[str]) -> dict:
     return {"ungrouped": group_ids}
 
 
+CODE_STYLES = {
+    "dark": {"bg": "#1E1E1E", "text": "#D4D4D4", "label": "#555555", "outline": None},
+    "terminal": {"bg": "#0D1117", "text": "#58A6FF", "label": "#8B949E", "outline": None},
+    "light": {"bg": "#F6F8FA", "text": "#24292F", "label": "#656D76", "outline": "#D0D7DE"},
+    "notebook": {"bg": "#FFFFFF", "text": "#333333", "label": "#6E7781", "outline": "#E1E4E8"},
+}
+
 def add_code_slide(
     presentation_id: str, title: str, code: str,
     language: str = "", theme: str | None = None,
+    code_style: str = "dark",
 ) -> dict:
-    """Create a slide with a styled code block (dark background, mono font)."""
+    """Create a slide with a styled code block.
+
+    code_style: "dark" (VS Code), "terminal" (GitHub dark), "light" (GitHub light), "notebook" (Jupyter)
+    """
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     from shared.utils import hex_to_rgb
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
+    cs = CODE_STYLES.get(code_style, CODE_STYLES["dark"])
     slide_id = _new_id()
     L = LAYOUT["content"]
 
@@ -1442,13 +1454,11 @@ def add_code_slide(
     }}]
     reqs.extend(_set_bg_reqs(slide_id, pal))
 
-    # Title
     tid = _new_id()
     reqs.extend(_text_box_reqs(tid, slide_id, title, L["title"],
         font=FONTS["heading"], size=FONT_SIZES["slide_title"],
         color=pal["primary_text"], bold=True, alignment="START"))
 
-    # Code block background (dark rounded rectangle)
     code_bg_id = _new_id()
     code_area = {"x": L["body"]["x"], "y": L["body"]["y"], "w": L["body"]["w"], "h": L["body"]["h"]}
     reqs.append({"createShape": {
@@ -1459,17 +1469,24 @@ def add_code_slide(
             "transform": _emu_transform(code_area["x"], code_area["y"]),
         },
     }})
+    shape_props: dict = {
+        "shapeBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(cs["bg"])}}},
+        "contentAlignment": "TOP",
+    }
+    shape_fields = "shapeBackgroundFill,contentAlignment"
+    if cs["outline"]:
+        shape_props["outline"] = {
+            "outlineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(cs["outline"])}}},
+            "weight": {"magnitude": 1.0, "unit": "PT"},
+        }
+        shape_fields += ",outline"
+    else:
+        shape_props["outline"] = {"propertyState": "NOT_RENDERED"}
+        shape_fields += ",outline"
     reqs.append({"updateShapeProperties": {
-        "objectId": code_bg_id,
-        "shapeProperties": {
-            "shapeBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb("#1E1E1E")}}},
-            "outline": {"propertyState": "NOT_RENDERED"},
-            "contentAlignment": "TOP",
-        },
-        "fields": "shapeBackgroundFill,outline,contentAlignment",
+        "objectId": code_bg_id, "shapeProperties": shape_props, "fields": shape_fields,
     }})
 
-    # Language label (top-right corner, as a separate text box)
     if language:
         lang_id = _new_id()
         lang_pos = {
@@ -1478,24 +1495,24 @@ def add_code_slide(
             "w": 800_000, "h": 254_000,
         }
         reqs.extend(_text_box_reqs(lang_id, slide_id, language, lang_pos,
-            font=FONTS["mono"], size=9, color="#555555", alignment="END"))
+            font=FONTS["mono"], size=9, color=cs["label"], alignment="END"))
 
-    # Code text box (overlaid on the dark background)
     code_id = _new_id()
+    pad = 152_400
     code_text_area = {
-        "x": code_area["x"] + 152_400,
-        "y": code_area["y"] + 152_400,
-        "w": code_area["w"] - 304_800,
-        "h": code_area["h"] - 304_800,
+        "x": code_area["x"] + pad,
+        "y": code_area["y"] + pad,
+        "w": code_area["w"] - 2 * pad,
+        "h": code_area["h"] - 2 * pad,
     }
     reqs.extend(_text_box_reqs(code_id, slide_id, code, code_text_area,
-        font=FONTS["mono"], size=13, color="#D4D4D4",
+        font=FONTS["mono"], size=13, color=cs["text"],
         alignment="START", line_spacing=130))
 
     reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
-    return {"slide_id": slide_id, "title": title}
+    return {"slide_id": slide_id, "title": title, "code_style": code_style}
 
 
 def update_table_columns(

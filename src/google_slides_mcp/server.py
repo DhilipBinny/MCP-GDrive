@@ -179,6 +179,7 @@ def gslides_add_slide(
     body_color: str | None = None,
     bg_color: str | None = None,
     line_spacing: float | None = None,
+    code_style: str = "dark",
 ) -> str:
     """Add a slide to a presentation. The `type` parameter selects the layout.
 
@@ -198,7 +199,7 @@ def gslides_add_slide(
     - "table" — styled table with colored header (uses: title, headers, rows). Max 8 rows, 6 cols.
     - "metrics" — 2-4 big numbers (uses: title, metrics=[{"value": "98%", "label": "Uptime"}])
     - "quote" — quote with accent bar (uses: quote, attribution). Don't add quotation marks — added auto.
-    - "code" — dark background code block (uses: title, code, language)
+    - "code" — styled code block (uses: title, code, language, code_style=dark/terminal/light/notebook)
     - "image_text" — image + text side by side (uses: title, image_url, body, image_side)
     - "chart" — live Sheets chart embed (uses: title, spreadsheet_id, chart_id)
     - "image" — image slide (uses: title, image_url). Image must be publicly accessible URL.
@@ -267,7 +268,7 @@ def gslides_add_slide(
     elif t == "quote":
         r = slides_service.add_quote_slide(presentation_id, quote, attribution, theme)
     elif t == "code":
-        r = slides_service.add_code_slide(presentation_id, title, code, language, theme)
+        r = slides_service.add_code_slide(presentation_id, title, code, language, theme, code_style=code_style)
     elif t == "image_text":
         r = slides_service.add_image_text_slide(presentation_id, title, image_url, body, image_side, theme)
     elif t == "chart":
