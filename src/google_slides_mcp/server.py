@@ -504,6 +504,31 @@ def gslides_add_section_slide(
 
 @mcp.tool()
 @_handle_errors
+def gslides_add_content_slide(
+    presentation_id: str,
+    title: str,
+    body: str,
+    speaker_notes: str = "",
+    theme: str = "modern",
+) -> str:
+    """Add a content slide with professional typography (Montserrat title, Open Sans body).
+
+    Multi-line body automatically becomes a bullet list. Uses the design system
+    with proper font sizes, spacing, and colors.
+
+    Args:
+        presentation_id: The presentation ID
+        title: Slide title
+        body: Body text (each line becomes a bullet if multi-line)
+        speaker_notes: Optional speaker notes
+        theme: Color theme — modern, corporate, dark, warm
+    """
+    result = slides_service.add_content_slide(presentation_id, title, body, speaker_notes, theme)
+    return f"Added content slide: **{result['title']}** (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
 def gslides_add_two_column_slide(
     presentation_id: str,
     title: str,
@@ -617,6 +642,28 @@ def gslides_add_styled_table(
     """
     result = slides_service.add_styled_table_slide(presentation_id, title, headers, rows, theme)
     return f"Added styled table: **{result['title']}** ({result['table']}) (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_code_slide(
+    presentation_id: str,
+    title: str,
+    code: str,
+    language: str = "",
+    theme: str = "modern",
+) -> str:
+    """Add a slide with a styled code block (dark background, mono font).
+
+    Args:
+        presentation_id: The presentation ID
+        title: Slide title
+        code: Code content (multi-line)
+        language: Optional language label (e.g. "python", "bash")
+        theme: Color theme
+    """
+    result = slides_service.add_code_slide(presentation_id, title, code, language, theme)
+    return f"Added code slide: **{result['title']}** (`{result['slide_id']}`)"
 
 
 @mcp.tool()
