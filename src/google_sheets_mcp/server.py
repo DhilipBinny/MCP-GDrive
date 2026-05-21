@@ -235,8 +235,8 @@ def gsheets_write(
     a = action.lower()
 
     if a == "write":
-        if not range:
-            return "ERROR: range is required for write action."
+        if not cell_range:
+            return "ERROR: cell_range is required for write action."
         if not values:
             return "ERROR: values is required for write action."
         option = "USER_ENTERED" if input_mode == "user" else "RAW"
@@ -244,17 +244,17 @@ def gsheets_write(
         return f"Wrote {result['updated_cells']} cells to `{result['updated_range']}`"
 
     elif a == "append":
-        if not range:
-            return "ERROR: range is required for append action."
+        if not cell_range:
+            return "ERROR: cell_range is required for append action."
         if not values:
             return "ERROR: values is required for append action."
         result = sheets_service.append_rows(spreadsheet_id, cell_range, values)
         return f"Appended {result['updated_rows']} row(s) to `{result['updated_range']}`"
 
     elif a == "clear":
-        if not range:
-            return "ERROR: range is required for clear action."
-        result = sheets_service.clear_range(spreadsheet_id, range)
+        if not cell_range:
+            return "ERROR: cell_range is required for clear action."
+        result = sheets_service.clear_range(spreadsheet_id, cell_range)
         return f"Cleared `{result['cleared_range']}`"
 
     else:
@@ -338,7 +338,7 @@ def gsheets_format(
     a = action.lower()
 
     if a == "style":
-        if not range:
+        if not cell_range:
             return "ERROR: range is required for style action."
         result = sheets_service.format_cells(
             spreadsheet_id, cell_range,
@@ -350,25 +350,25 @@ def gsheets_format(
         return f"Formatted `{result['formatted_range']}` ({result['fields_applied']} properties applied)"
 
     elif a == "borders":
-        if not range:
+        if not cell_range:
             return "ERROR: range is required for borders action."
         result = sheets_service.add_borders(spreadsheet_id, cell_range, style, color, edges=edges)
         return f"Added {edges} borders on `{result['bordered_range']}`"
 
     elif a == "merge":
-        if not range:
+        if not cell_range:
             return "ERROR: range is required for merge action."
         result = sheets_service.merge_cells(spreadsheet_id, cell_range, merge_type)
         return f"Merged `{result['merged_range']}` ({result['merge_type']})"
 
     elif a == "unmerge":
-        if not range:
+        if not cell_range:
             return "ERROR: range is required for unmerge action."
-        result = sheets_service.unmerge_cells(spreadsheet_id, range)
+        result = sheets_service.unmerge_cells(spreadsheet_id, cell_range)
         return f"Unmerged `{result['unmerged_range']}`"
 
     elif a == "conditional_format":
-        if not range:
+        if not cell_range:
             return "ERROR: range is required for conditional_format action."
         if not rule_type:
             return "ERROR: rule_type is required for conditional_format action."
@@ -378,7 +378,7 @@ def gsheets_format(
         return f"Added {result['rule_type']} conditional format on `{result['range']}`"
 
     elif a == "data_validation":
-        if not range:
+        if not cell_range:
             return "ERROR: range is required for data_validation action."
         if not rule_type:
             return "ERROR: rule_type is required for data_validation action."

@@ -21,7 +21,7 @@ def _search_text_runs(paragraphs: list[dict], search_text: str) -> list[tuple[in
                 idx = content.find(search_text, pos)
                 if idx == -1:
                     break
-                doc_start = elem_start + idx
+                doc_start = elem_start + utf16_len(content[:idx])
                 doc_end = doc_start + utf16_len(search_text)
                 hits.append((doc_start, doc_end))
                 pos = idx + len(search_text)
