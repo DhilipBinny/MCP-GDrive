@@ -356,7 +356,7 @@ def drawio_xml_to_slides_requests(
                 "updateShapeProperties": {
                     "objectId": sid,
                     "shapeProperties": {"autofit": {"autofitType": "TEXT_AUTOFIT"}},
-                    "fields": "autofit",
+                    "fields": "autofit.autofitType",
                 }
             })
 
