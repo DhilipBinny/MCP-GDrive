@@ -250,7 +250,7 @@ LAYOUT = {
 # ── Spacing (EMU) ────────────────────────────────────────────────
 
 SPACING = {
-    "title_to_body": 228_600,
+    "title_to_body": 152_400,    # actual gap used in _BODY_Y computation
     "title_to_divider": 101_600,
     "divider_to_body": 152_400,
     "between_paragraphs": 101_600,

@@ -231,6 +231,7 @@ def gslides_add_slide(
         image_side: "left" or "right" (image_text type)
         spreadsheet_id: Source spreadsheet (chart type)
         chart_id: Chart ID from gsheets_add_chart (chart type)
+        code_style: Code block style — "dark" (VS Code), "terminal" (GitHub dark), "light" (GitHub light), "notebook" (Jupyter)
         speaker_notes: Optional speaker notes
         layout_id: Layout object ID from template (from_layout type — use gslides_manage action=list_layouts)
         texts: Dict mapping placeholder keys to text (from_layout type — e.g. {"TITLE_0": "...", "BODY_0": "..."})

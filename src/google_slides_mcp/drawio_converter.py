@@ -174,6 +174,7 @@ def drawio_xml_to_slides_requests(
         elif c.get("edge") == "1":
             edges.append({
                 "id": cid, "source": c.get("source", ""), "target": c.get("target", ""),
+                "label": _clean(c.get("value")),
                 "style": _parse_style(c.get("style", "")),
             })
 
@@ -329,9 +330,9 @@ def drawio_xml_to_slides_requests(
         props: dict = {"contentAlignment": v_align}
         flds = ["contentAlignment"]
 
-        # Fill — transparent for containers, white, text-style, or "none"
+        explicitly_white = raw_fill.lower().strip("#") in ("ffffff", "fff") if raw_fill else False
         no_fill = (is_container or is_text or fill == "none"
-                   or fill in ("#FFFFFF", "#ffffff"))
+                   or (not raw_fill and fill in ("#FFFFFF", "#ffffff")))
         if no_fill:
             props["shapeBackgroundFill"] = {"propertyState": "NOT_RENDERED"}
         else:
@@ -431,5 +432,42 @@ def drawio_xml_to_slides_requests(
             lp["dashStyle"] = "DASH"
             lf += ",dashStyle"
         requests.append({"updateLineProperties": {"objectId": lid, "lineProperties": lp, "fields": lf}})
+
+        if edge.get("label"):
+            src_v = id_map.get(src)
+            tgt_v = id_map.get(tgt)
+            if src_v and tgt_v:
+                mid_x = (src_v["x"] + src_v["w"] / 2 + tgt_v["x"] + tgt_v["w"] / 2) / 2
+                mid_y = (src_v["y"] + src_v["h"] / 2 + tgt_v["y"] + tgt_v["h"] / 2) / 2
+                lbl_id = _id()
+                lbl_w = max(80, len(edge["label"]) * 8)
+                lbl_h = 25
+                requests.append({"createShape": {
+                    "objectId": lbl_id, "shapeType": "TEXT_BOX",
+                    "elementProperties": {
+                        "pageObjectId": slide_id,
+                        "size": {"width": {"magnitude": px(lbl_w), "unit": "EMU"},
+                                 "height": {"magnitude": px(lbl_h), "unit": "EMU"}},
+                        "transform": {"scaleX": 1, "scaleY": 1,
+                                      "translateX": pos_x(mid_x - lbl_w / 2),
+                                      "translateY": pos_y(mid_y - lbl_h / 2), "unit": "EMU"},
+                    },
+                }})
+                requests.append({"insertText": {"objectId": lbl_id, "text": edge["label"]}})
+                lbl_fpt = fit_font(edge["label"], lbl_w * scale, lbl_h * scale)
+                requests.append({"updateTextStyle": {
+                    "objectId": lbl_id,
+                    "style": {
+                        "fontSize": {"magnitude": min(lbl_fpt, 8), "unit": "PT"},
+                        "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb("#5F6368")}},
+                        "italic": True,
+                    },
+                    "textRange": {"type": "ALL"},
+                    "fields": "fontSize,foregroundColor,italic",
+                }})
+                requests.append({"updateParagraphStyle": {
+                    "objectId": lbl_id, "style": {"alignment": "CENTER"},
+                    "textRange": {"type": "ALL"}, "fields": "alignment",
+                }})
 
     return requests, node_map

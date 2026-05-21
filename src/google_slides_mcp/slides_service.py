@@ -16,14 +16,6 @@ EMU_PER_INCH = 914400
 SLIDE_WIDTH = 9144000
 SLIDE_HEIGHT = 5143500
 
-POSITIONS = {
-    "title": {"x": 311700, "y": 292925, "w": 8520300, "h": 572700},
-    "subtitle": {"x": 311700, "y": 897225, "w": 8520300, "h": 400050},
-    "body_full": {"x": 311700, "y": 1333500, "w": 8520300, "h": 3530600},
-    "table_centered": {"x": 672000, "y": 1500000, "w": 7800000, "h": 3600000},
-    "image_centered": {"x": 457200, "y": 914400, "w": 8229600, "h": 3314700},
-}
-
 
 def _get_service():
     global _service
@@ -417,7 +409,8 @@ def add_image_slide(
             }
         })
     else:
-        pos = POSITIONS["image_centered"]
+        from .design import CONTENT
+        pos = CONTENT
         requests.append({
             "createImage": {
                 "objectId": image_id,
