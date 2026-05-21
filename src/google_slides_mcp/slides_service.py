@@ -1500,17 +1500,18 @@ def add_styled_table_slide(
                 "fields": "tableCellBackgroundFill",
             }})
 
-    # Table borders
-    reqs.append({"updateTableBorderProperties": {
-        "objectId": table_id,
-        "borderPosition": "ALL",
-        "tableBorderProperties": {
-            "tableBorderFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["table_border"])}}},
-            "weight": {"magnitude": 0.75, "unit": "PT"},
-            "dashStyle": "SOLID",
-        },
-        "fields": "tableBorderFill,weight,dashStyle",
-    }})
+    # Table borders — horizontal rules only (modern style, no outer border)
+    for pos in ("INNER_HORIZONTAL", "BOTTOM", "TOP"):
+        reqs.append({"updateTableBorderProperties": {
+            "objectId": table_id,
+            "borderPosition": pos,
+            "tableBorderProperties": {
+                "tableBorderFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["table_border"])}}},
+                "weight": {"magnitude": 0.5, "unit": "PT"},
+                "dashStyle": "SOLID",
+            },
+            "fields": "tableBorderFill,weight,dashStyle",
+        }})
 
     # Auto-size columns proportionally
     col_widths = _auto_column_widths(headers, L["table"]["w"])
