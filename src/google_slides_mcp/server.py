@@ -467,6 +467,9 @@ def gslides_manage(
     - "merge_table_cells" — merge cells (uses: table_id, row_index, col_index, row_span, col_span)
     - "list_layouts" — list available layouts in the deck (for from_layout slides)
     - "create_from_template" — copy a template deck, clear content, return clean deck with theme (uses: find as template_id, name, folder_id)
+    - "get_image_url" — extract image URL from an element (uses: element_id). Returns source_url + temporary content_url
+    - "clone_slide" — copy slide within or across presentations (uses: slide_id, find=target_presentation_id, position). Cross-deck recreates all elements.
+    - "copy_element" — copy element to another presentation (uses: element_id, find=source_presentation_id, slide_id=target_slide_id, image_url=target_presentation_id)
 
     Args:
         presentation_id: The presentation ID
@@ -562,6 +565,31 @@ def gslides_manage(
             phs = ", ".join(f"{p['type']}[{p['index']}]" for p in l["placeholders"])
             lines.append(f"- **{l['name']}** `{l['layout_id']}` — {phs or 'none'}")
         return "\n".join(lines)
+    elif a == "get_image_url":
+        r = slides_service.get_image_url(presentation_id, element_id)
+        if "error" in r:
+            return f"ERROR: {r['error']}"
+        parts = [f"Image from `{element_id}`:"]
+        if r.get("source_url"): parts.append(f"  Source URL: {r['source_url']}")
+        if r.get("content_url"): parts.append(f"  Content URL (temp 30min): {r['content_url']}")
+        if r.get("width_emu"): parts.append(f"  Size: {r['width_emu']}x{r['height_emu']} EMU")
+        return "\n".join(parts)
+    elif a == "clone_slide":
+        target_pres = find or None
+        r = slides_service.clone_slide(presentation_id, slide_id, target_pres, position)
+        if "error" in r:
+            return f"ERROR: {r['error']}"
+        return f"Cloned slide → `{r['slide_id']}` ({r['method']}, {r.get('elements_copied', 'native')} elements) in `{r['presentation_id']}`"
+    elif a == "copy_element":
+        target_pres = image_url or find
+        if not target_pres:
+            return "ERROR: Provide target presentation ID via find or image_url param"
+        x_pos = None
+        y_pos = None
+        r = slides_service.copy_element(presentation_id, element_id, target_pres, slide_id, x_pos, y_pos)
+        if "error" in r:
+            return f"ERROR: {r['error']}"
+        return f"Copied `{r['copied']}` → slide `{r['to_slide']}` ({r['requests']} API requests)"
     else:
         return f"ERROR: Unknown action '{action}'"
 
