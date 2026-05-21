@@ -247,16 +247,16 @@ def drawio_xml_to_slides_requests(
     def pos_y(y: float) -> int:
         return emu((y - min_y) * scale + oy)
 
-    # Font size that fits the shape: chars_wide ≈ width_inches / (font_pt * 0.007)
     def fit_font(label: str, shape_w_in: float, shape_h_in: float, original_pt: int) -> int:
         if not label: return original_pt
-        max_line = max(len(line) for line in label.split("\n")) if label else 1
-        num_lines = label.count("\n") + 1
+        pad_w = shape_w_in * 0.85
+        pad_h = shape_h_in * 0.80
+        lines = label.split("\n")
+        max_line = max(len(l) for l in lines) if lines else 1
+        num_lines = len(lines)
         if max_line == 0: return original_pt
-        # Width constraint: font_pt ≈ shape_width / (chars * 0.55)
-        fw = (shape_w_in * 72) / (max_line * 0.65) if max_line > 0 else 20
-        # Height constraint: font_pt ≈ shape_height / (lines * 1.3)
-        fh = (shape_h_in * 72) / (num_lines * 1.3) if num_lines > 0 else 20
+        fw = (pad_w * 72) / (max_line * 0.62) if max_line > 0 else 20
+        fh = (pad_h * 72) / (num_lines * 1.4) if num_lines > 0 else 20
         return max(2, min(int(min(fw, fh)), 14))
 
     requests: list[dict] = []
@@ -349,14 +349,6 @@ def drawio_xml_to_slides_requests(
                 "updateParagraphStyle": {
                     "objectId": sid, "style": {"alignment": "CENTER"},
                     "textRange": {"type": "ALL"}, "fields": "alignment",
-                }
-            })
-            # TEXT_AUTOFIT must be applied AFTER text insertion (insertText resets it to NONE)
-            requests.append({
-                "updateShapeProperties": {
-                    "objectId": sid,
-                    "shapeProperties": {"autofit": {"autofitType": "TEXT_AUTOFIT"}},
-                    "fields": "autofit.autofitType",
                 }
             })
 
