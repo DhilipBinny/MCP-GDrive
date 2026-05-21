@@ -462,6 +462,284 @@ def gslides_duplicate_slide(presentation_id: str, slide_id: str) -> str:
 
 @mcp.tool()
 @_handle_errors
+def gslides_add_title_slide(
+    presentation_id: str,
+    title: str,
+    subtitle: str = "",
+    author: str = "",
+    theme: str = "modern",
+) -> str:
+    """Add a professional title slide with centered title, subtitle, and author.
+
+    Args:
+        presentation_id: The presentation ID
+        title: Main title text
+        subtitle: Optional subtitle
+        author: Optional author/date line
+        theme: Color theme — modern, corporate, dark, warm
+    """
+    result = slides_service.add_title_slide(presentation_id, title, subtitle, author, theme)
+    return f"Added title slide: **{result['title']}** (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_section_slide(
+    presentation_id: str,
+    title: str,
+    section_number: str = "",
+    theme: str = "modern",
+) -> str:
+    """Add a section divider slide with accent-colored background.
+
+    Args:
+        presentation_id: The presentation ID
+        title: Section title
+        section_number: Optional section number (e.g. "01", "Part 2")
+        theme: Color theme — modern, corporate, dark, warm
+    """
+    result = slides_service.add_section_slide(presentation_id, title, section_number, theme)
+    return f"Added section slide: **{result['title']}** (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_two_column_slide(
+    presentation_id: str,
+    title: str,
+    col1: str,
+    col2: str,
+    col1_title: str = "",
+    col2_title: str = "",
+    theme: str = "modern",
+) -> str:
+    """Add a two-column content slide with proper gutter spacing.
+
+    Args:
+        presentation_id: The presentation ID
+        title: Slide title
+        col1: Left column text (multi-line for bullets)
+        col2: Right column text
+        col1_title: Optional left column heading
+        col2_title: Optional right column heading
+        theme: Color theme
+    """
+    result = slides_service.add_two_column_slide(
+        presentation_id, title, col1, col2, col1_title, col2_title, theme)
+    return f"Added two-column slide: **{result['title']}** (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_image_text_slide(
+    presentation_id: str,
+    title: str,
+    image_url: str,
+    text: str,
+    image_side: str = "left",
+    theme: str = "modern",
+) -> str:
+    """Add a slide with image on one side and text on the other.
+
+    Args:
+        presentation_id: The presentation ID
+        title: Slide title
+        image_url: Public image URL
+        text: Text content (multi-line supported)
+        image_side: "left" or "right" — where to place the image
+        theme: Color theme
+    """
+    result = slides_service.add_image_text_slide(
+        presentation_id, title, image_url, text, image_side, theme)
+    return f"Added image+text slide: **{result['title']}** (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_quote_slide(
+    presentation_id: str,
+    quote: str,
+    attribution: str = "",
+    theme: str = "modern",
+) -> str:
+    """Add a quote slide with accent bar and attribution.
+
+    Args:
+        presentation_id: The presentation ID
+        quote: Quote text (don't include quotation marks — they're added automatically)
+        attribution: Who said it (e.g. "Steve Jobs")
+        theme: Color theme
+    """
+    result = slides_service.add_quote_slide(presentation_id, quote, attribution, theme)
+    return f"Added quote slide (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_metrics_slide(
+    presentation_id: str,
+    title: str,
+    metrics: list[dict],
+    theme: str = "modern",
+) -> str:
+    """Add a big-numbers metrics slide (2-4 key metrics displayed prominently).
+
+    metrics: list of objects with "value" and "label" keys.
+    Example: [{"value": "98.5%", "label": "Uptime"}, {"value": "4.2M", "label": "Users"}]
+
+    Args:
+        presentation_id: The presentation ID
+        title: Slide title
+        metrics: List of metric objects (max 4) with "value" and "label"
+        theme: Color theme
+    """
+    result = slides_service.add_metrics_slide(presentation_id, title, metrics, theme)
+    return f"Added metrics slide: **{result['title']}** ({result['metrics_count']} metrics) (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_styled_table(
+    presentation_id: str,
+    title: str,
+    headers: list[str],
+    rows: list[list[str]],
+    theme: str = "modern",
+) -> str:
+    """Add a professionally styled table slide — colored header, alternating rows, borders.
+
+    Args:
+        presentation_id: The presentation ID
+        title: Slide title
+        headers: Column headers
+        rows: Data rows
+        theme: Color theme — modern (blue), corporate (navy), dark, warm
+    """
+    result = slides_service.add_styled_table_slide(presentation_id, title, headers, rows, theme)
+    return f"Added styled table: **{result['title']}** ({result['table']}) (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_chart_slide(
+    presentation_id: str,
+    spreadsheet_id: str,
+    chart_id: int,
+    title: str = "",
+    linked: bool = True,
+) -> str:
+    """Embed a live Google Sheets chart onto a slide.
+
+    The chart_id is returned by gsheets_add_chart. If linked=true, the chart
+    updates automatically when the spreadsheet data changes.
+
+    Args:
+        presentation_id: The presentation ID
+        spreadsheet_id: The source spreadsheet ID
+        chart_id: The chart ID (from gsheets_add_chart)
+        title: Optional slide title
+        linked: Keep chart linked to source data (default true)
+    """
+    result = slides_service.add_chart_slide(presentation_id, spreadsheet_id, chart_id, title, linked)
+    return f"Added chart slide: **{result['title'] or '(chart)'}** (`{result['slide_id']}`)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_set_background(
+    presentation_id: str,
+    slide_id: str,
+    color: str | None = None,
+    image_url: str | None = None,
+) -> str:
+    """Set a slide's background to a solid color or image.
+
+    Args:
+        presentation_id: The presentation ID
+        slide_id: The slide object ID
+        color: Background color hex (e.g. "#1A1A1A")
+        image_url: Background image URL (overrides color)
+    """
+    result = slides_service.set_slide_background(presentation_id, slide_id, color, image_url)
+    return f"Set {result['background']} background on slide `{result['slide_id']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_update_element(
+    presentation_id: str,
+    element_id: str,
+    x: float | None = None,
+    y: float | None = None,
+    width: float | None = None,
+    height: float | None = None,
+) -> str:
+    """Move or resize any element on a slide. Dimensions in inches.
+
+    Args:
+        presentation_id: The presentation ID
+        element_id: The element object ID (from gslides_read)
+        x: New x position in inches (from left)
+        y: New y position in inches (from top)
+        width: New width in inches
+        height: New height in inches
+    """
+    result = slides_service.update_element(presentation_id, element_id, x, y, width, height)
+    return f"Updated element `{result['element_id']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_z_order(
+    presentation_id: str,
+    element_ids: list[str],
+    operation: str = "BRING_TO_FRONT",
+) -> str:
+    """Change z-order of elements (layering).
+
+    Args:
+        presentation_id: The presentation ID
+        element_ids: List of element object IDs
+        operation: BRING_TO_FRONT, SEND_TO_BACK, BRING_FORWARD, SEND_BACKWARD
+    """
+    result = slides_service.z_order(presentation_id, element_ids, operation)
+    return f"{result['operation']} applied to {len(result['elements'])} element(s)"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_group(
+    presentation_id: str,
+    element_ids: list[str],
+) -> str:
+    """Group multiple elements together.
+
+    Args:
+        presentation_id: The presentation ID
+        element_ids: List of element object IDs to group (min 2)
+    """
+    result = slides_service.group_elements(presentation_id, element_ids)
+    return f"Grouped {len(result['children'])} elements → `{result['group_id']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_ungroup(
+    presentation_id: str,
+    group_ids: list[str],
+) -> str:
+    """Ungroup previously grouped elements.
+
+    Args:
+        presentation_id: The presentation ID
+        group_ids: List of group object IDs to ungroup
+    """
+    result = slides_service.ungroup_elements(presentation_id, group_ids)
+    return f"Ungrouped {len(result['ungrouped'])} group(s)"
+
+
+@mcp.tool()
+@_handle_errors
 def gslides_get_thumbnail(
     presentation_id: str,
     slide_id: str,
