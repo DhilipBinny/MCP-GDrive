@@ -1738,6 +1738,9 @@ def audit_styles(presentation_id: str) -> dict:
     page_num_slides = set()
     footer_slides = set()
 
+    SLIDE_H_EMU = 5_625_000
+    TITLE_Y_THRESHOLD = SLIDE_H_EMU * 0.40
+
     for s_idx, slide in enumerate(pres.get("slides", [])):
         slide_num = s_idx + 1
         has_title = False
@@ -1745,29 +1748,22 @@ def audit_styles(presentation_id: str) -> dict:
         has_page_num = False
         has_footer = False
 
+        # Collect text element candidates for multi-signal title detection
+        text_candidates = []
+
         for elem in slide.get("pageElements", []):
             obj_id = elem["objectId"]
             shape = elem.get("shape", {})
             table = elem.get("table", {})
             transform = elem.get("transform", {})
+            elem_y = transform.get("translateY", 0)
 
             is_placeholder = shape.get("placeholder", {}).get("type", "")
-            if is_placeholder == "TITLE" or is_placeholder == "CENTERED_TITLE":
-                has_title = True
-                tx = transform.get("translateX", 0)
-                ty = transform.get("translateY", 0)
-                title_positions.append({"slide": slide_num, "x": tx, "y": ty, "id": obj_id})
-                for te in shape.get("text", {}).get("textElements", []):
-                    tr = te.get("textRun", {})
-                    if not tr or not tr.get("content", "").strip():
-                        continue
-                    ts = tr.get("style", {})
-                    tf = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
-                    if tf:
-                        title_fonts[tf] = title_fonts.get(tf, 0) + 1
-                    tfs = ts.get("fontSize", {}).get("magnitude")
-                    if tfs:
-                        title_sizes[tfs] = title_sizes.get(tfs, 0) + 1
+
+            max_font_in_elem = 0
+            has_bold = False
+            has_heading_font = False
+            elem_text = ""
 
             for te in shape.get("text", {}).get("textElements", []):
                 tr = te.get("textRun", {})
@@ -1775,22 +1771,45 @@ def audit_styles(presentation_id: str) -> dict:
                 if not content:
                     continue
                 has_content = True
+                elem_text += content + " "
                 ts = tr.get("style", {})
                 ff = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
                 if ff:
                     fonts[ff] = fonts.get(ff, 0) + 1
+                    if ff.lower() in ("montserrat", "roboto slab", "playfair display", "raleway", "poppins"):
+                        has_heading_font = True
                 fs = ts.get("fontSize", {}).get("magnitude")
                 if fs:
                     sizes[fs] = sizes.get(fs, 0) + 1
+                    max_font_in_elem = max(max_font_in_elem, fs)
                     if fs <= 9 and len(content) <= 4 and content.isdigit():
                         has_page_num = True
+                if ts.get("bold"):
+                    has_bold = True
                 fg = ts.get("foregroundColor", {}).get("opaqueColor", {}).get("rgbColor", {})
                 if fg:
                     r, g, b = fg.get("red", 0), fg.get("green", 0), fg.get("blue", 0)
                     hex_c = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
                     colors[hex_c] = colors.get(hex_c, 0) + 1
-                if "©" in content or "bsigma" in content.lower() or "footer" in content.lower():
+                if "©" in content or "bsigma" in content.lower():
                     has_footer = True
+
+            if elem_text.strip() and max_font_in_elem > 0:
+                score = 0
+                if is_placeholder in ("TITLE", "CENTERED_TITLE"):
+                    score += 3
+                if max_font_in_elem >= 20:
+                    score += 2
+                if elem_y < TITLE_Y_THRESHOLD:
+                    score += 1
+                if has_bold:
+                    score += 1
+                if has_heading_font:
+                    score += 1
+                text_candidates.append({
+                    "id": obj_id, "y": elem_y, "font": max_font_in_elem,
+                    "score": score, "placeholder": is_placeholder,
+                })
 
             if table:
                 has_content = True
@@ -1808,6 +1827,29 @@ def audit_styles(presentation_id: str) -> dict:
                     "columns": table.get("columns", 0),
                     "has_styled_header": has_header_bg,
                 })
+
+        # Title detection: pick candidate with highest score (needs >=2 signals)
+        if text_candidates:
+            best = max(text_candidates, key=lambda c: (c["score"], c["font"]))
+            if best["score"] >= 2:
+                has_title = True
+                title_positions.append({"slide": slide_num, "x": 0, "y": best["y"], "id": best["id"]})
+                # Track title font/size from the best candidate's element
+                for elem in slide.get("pageElements", []):
+                    if elem["objectId"] != best["id"]:
+                        continue
+                    for te in elem.get("shape", {}).get("text", {}).get("textElements", []):
+                        tr = te.get("textRun", {})
+                        if not tr or not tr.get("content", "").strip():
+                            continue
+                        ts = tr.get("style", {})
+                        tf = ts.get("fontFamily", ts.get("weightedFontFamily", {}).get("fontFamily", ""))
+                        if tf:
+                            title_fonts[tf] = title_fonts.get(tf, 0) + 1
+                        tfs = ts.get("fontSize", {}).get("magnitude")
+                        if tfs:
+                            title_sizes[tfs] = title_sizes.get(tfs, 0) + 1
+                    break
 
         if not has_title and has_content and slide_num > 1:
             slides_without_title.append(slide_num)
