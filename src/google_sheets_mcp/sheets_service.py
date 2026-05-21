@@ -47,6 +47,7 @@ def get_info(spreadsheet_id: str) -> dict:
     for s in spreadsheet.get("sheets", []):
         props = s["properties"]
         grid = props.get("gridProperties", {})
+        chart_ids = [c["chartId"] for c in s.get("charts", [])]
         sheets.append({
             "title": props["title"],
             "sheet_id": props["sheetId"],
@@ -54,6 +55,7 @@ def get_info(spreadsheet_id: str) -> dict:
             "row_count": grid.get("rowCount", 0),
             "column_count": grid.get("columnCount", 0),
             "hidden": props.get("hidden", False),
+            "chart_ids": chart_ids,
         })
     return {
         "spreadsheet_id": spreadsheet_id,
@@ -165,7 +167,7 @@ def find_in_sheet(
         result = execute_with_retry(
             service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
-                range=f"{qname}!A1:ZZ",
+                range=f"{qname}!A:ZZ",
                 valueRenderOption="FORMATTED_VALUE",
             )
         )
@@ -243,6 +245,8 @@ def format_cells(
     if wrap_strategy is not None:
         cell_format["wrapStrategy"] = wrap_strategy.upper()
         fields.append("userEnteredFormat.wrapStrategy")
+    if number_format_type is None and number_format_pattern is not None:
+        number_format_type = "NUMBER"
     if number_format_type is not None:
         nf = {"type": number_format_type.upper()}
         if number_format_pattern:
@@ -310,6 +314,32 @@ def freeze_rows_columns(
         )
     )
     return {"frozen_rows": frozen_rows, "frozen_columns": frozen_columns, "auto_resized": auto_resize}
+
+
+def auto_resize_columns(
+    spreadsheet_id: str,
+    sheet_name: str | None = None,
+) -> dict:
+    """Auto-resize all columns to fit content."""
+    service = _get_service()
+    sheet_id, resolved_name = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+
+    requests = [{
+        "autoResizeDimensions": {
+            "dimensions": {
+                "sheetId": sheet_id,
+                "dimension": "COLUMNS",
+            }
+        }
+    }]
+
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests},
+        )
+    )
+    return {"sheet_name": resolved_name, "auto_resized": True}
 
 
 def add_sheet(spreadsheet_id: str, title: str) -> dict:
@@ -643,6 +673,8 @@ def add_borders(
         "all": ["top", "bottom", "left", "right", "innerHorizontal", "innerVertical"],
         "outer": ["top", "bottom", "left", "right"],
         "inner": ["innerHorizontal", "innerVertical"],
+        "inner_horizontal": ["innerHorizontal"],
+        "inner_vertical": ["innerVertical"],
     }
     edge_list = edge_map.get(edges.lower(), [edges.lower()])
 

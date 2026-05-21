@@ -239,6 +239,144 @@ class DocsRequestBuilder:
                 self._cursor = end
             elif child["type"] in ("list", "block_quote"):
                 self._walk_tokens([child])
+            elif child["type"] == "heading":
+                # Render heading as indented bold text inside blockquote
+                text, inline_formats = self._extract_inline(child.get("children", []))
+                text += "\n"
+                start = self._cursor
+                end = start + utf16_len(text)
+
+                self._insert_requests.append({"insertText": {"location": {"index": start}, "text": text}})
+                self._format_requests.append({
+                    "updateParagraphStyle": {
+                        "range": {"startIndex": start, "endIndex": end},
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "indentStart": _dim(36),
+                            "borderLeft": {
+                                "color": {"color": {"rgbColor": {"red": 0.75, "green": 0.75, "blue": 0.75}}},
+                                "width": _dim(3),
+                                "padding": _dim(10),
+                                "dashStyle": "SOLID",
+                            },
+                        },
+                        "fields": "namedStyleType,indentStart,borderLeft",
+                    }
+                })
+                self._format_requests.append({
+                    "updateTextStyle": {
+                        "range": {"startIndex": start, "endIndex": end},
+                        "textStyle": {
+                            "fontSize": _dim(11),
+                            "bold": True,
+                            "foregroundColor": {
+                                "color": {"rgbColor": {"red": 0.4, "green": 0.4, "blue": 0.4}}
+                            },
+                        },
+                        "fields": "fontSize,bold,foregroundColor",
+                    }
+                })
+                self._apply_inline_formats(start, inline_formats)
+                self._all_paragraph_ranges.append((start, end))
+                self._cursor = end
+            elif child["type"] == "block_code":
+                # Render code block as indented monospace text inside blockquote
+                raw = child.get("raw", "")
+                text = raw if raw.endswith("\n") else raw + "\n"
+                start = self._cursor
+                end = start + utf16_len(text)
+
+                self._insert_requests.append({"insertText": {"location": {"index": start}, "text": text}})
+                self._format_requests.append({
+                    "updateParagraphStyle": {
+                        "range": {"startIndex": start, "endIndex": end},
+                        "paragraphStyle": {
+                            "namedStyleType": "NORMAL_TEXT",
+                            "indentStart": _dim(36),
+                            "borderLeft": {
+                                "color": {"color": {"rgbColor": {"red": 0.75, "green": 0.75, "blue": 0.75}}},
+                                "width": _dim(3),
+                                "padding": _dim(10),
+                                "dashStyle": "SOLID",
+                            },
+                        },
+                        "fields": "namedStyleType,indentStart,borderLeft",
+                    }
+                })
+                self._format_requests.append({
+                    "updateTextStyle": {
+                        "range": {"startIndex": start, "endIndex": end},
+                        "textStyle": {
+                            "weightedFontFamily": {"fontFamily": "Courier New"},
+                            "fontSize": _dim(9),
+                            "foregroundColor": {
+                                "color": {"rgbColor": {"red": 0.4, "green": 0.4, "blue": 0.4}}
+                            },
+                        },
+                        "fields": "weightedFontFamily,fontSize,foregroundColor",
+                    }
+                })
+                self._all_paragraph_ranges.append((start, end))
+                self._cursor = end
+            elif child["type"] == "table":
+                # Render table as pipe-separated indented text inside blockquote
+                table_children = child.get("children", [])
+                lines = []
+                for tc in table_children:
+                    if tc["type"] == "table_head":
+                        cells = []
+                        for cell in tc.get("children", []):
+                            if cell["type"] == "table_cell":
+                                cell_text, _ = self._extract_inline(cell.get("children", []))
+                                cells.append(cell_text)
+                        if cells:
+                            lines.append("| " + " | ".join(cells) + " |")
+                            lines.append("| " + " | ".join(["---"] * len(cells)) + " |")
+                    elif tc["type"] == "table_body":
+                        for row in tc.get("children", []):
+                            cells = []
+                            for cell in row.get("children", []):
+                                if cell["type"] == "table_cell":
+                                    cell_text, _ = self._extract_inline(cell.get("children", []))
+                                    cells.append(cell_text)
+                            if cells:
+                                lines.append("| " + " | ".join(cells) + " |")
+                text = "\n".join(lines) + "\n" if lines else ""
+                if text:
+                    start = self._cursor
+                    end = start + utf16_len(text)
+                    self._insert_requests.append({"insertText": {"location": {"index": start}, "text": text}})
+                    self._format_requests.append({
+                        "updateParagraphStyle": {
+                            "range": {"startIndex": start, "endIndex": end},
+                            "paragraphStyle": {
+                                "namedStyleType": "NORMAL_TEXT",
+                                "indentStart": _dim(36),
+                                "borderLeft": {
+                                    "color": {"color": {"rgbColor": {"red": 0.75, "green": 0.75, "blue": 0.75}}},
+                                    "width": _dim(3),
+                                    "padding": _dim(10),
+                                    "dashStyle": "SOLID",
+                                },
+                            },
+                            "fields": "namedStyleType,indentStart,borderLeft",
+                        }
+                    })
+                    self._format_requests.append({
+                        "updateTextStyle": {
+                            "range": {"startIndex": start, "endIndex": end},
+                            "textStyle": {
+                                "fontSize": _dim(11),
+                                "foregroundColor": {
+                                    "color": {"rgbColor": {"red": 0.4, "green": 0.4, "blue": 0.4}}
+                                },
+                                "italic": True,
+                            },
+                            "fields": "fontSize,foregroundColor,italic",
+                        }
+                    })
+                    self._all_paragraph_ranges.append((start, end))
+                    self._cursor = end
 
     def _handle_thematic_break(self) -> None:
         text = "\n"
