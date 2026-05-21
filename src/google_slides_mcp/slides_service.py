@@ -70,35 +70,6 @@ def _resolve_theme(presentation_id: str, theme: str | None) -> str:
     return _deck_themes.get(presentation_id, DEFAULT_PALETTE)
 
 
-def _header_bar_reqs(slide_id: str, pal: dict) -> list[dict]:
-    """Full-width colored header bar behind the title (McKinsey pattern)."""
-    from .design import LAYOUT
-    from shared.utils import hex_to_rgb
-    L = LAYOUT["header_bar"]
-    bid = _new_id()
-    return [
-        {"createShape": {
-            "objectId": bid, "shapeType": "RECTANGLE",
-            "elementProperties": {
-                "pageObjectId": slide_id,
-                "size": _emu_size(L["w"], L["h"]),
-                "transform": _emu_transform(L["x"], L["y"]),
-            },
-        }},
-        {"updateShapeProperties": {
-            "objectId": bid,
-            "shapeProperties": {
-                "shapeBackgroundFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["accent"])}, "alpha": 1.0}},
-                "outline": {"propertyState": "NOT_RENDERED"},
-            },
-            "fields": "shapeBackgroundFill,outline",
-        }},
-        {"updatePageElementsZOrder": {
-            "pageElementObjectIds": [bid],
-            "operation": "SEND_TO_BACK",
-        }},
-    ]
-
 
 def _footer_line_reqs(slide_id: str, pal: dict) -> list[dict]:
     """Thin horizontal divider line above the footer area."""
@@ -1292,7 +1263,7 @@ def add_styled_table_slide(
 
 def add_chart_slide(
     presentation_id: str, spreadsheet_id: str, chart_id: int,
-    title: str = "", linked: bool = True,
+    title: str = "", linked: bool = True, theme: str | None = None,
 ) -> dict:
     """Embed a Sheets chart onto a slide."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette

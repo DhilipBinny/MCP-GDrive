@@ -1,37 +1,36 @@
 """Slide design system — typography, colors, layouts, spacing.
 
 Professional presentation constants based on McKinsey/Google/Apple standards.
-Canvas: 10,000,000 x 5,625,000 EMU (720 x 405 pt, 10 x 5.625 inches).
-Research-backed values from BrightCarbon, Deckary (MBB standards), WCAG 2.2.
+Canvas: 9,144,000 x 5,143,500 EMU (720 x 405 pt, 10 x 5.625 inches).
+1 inch = 914,400 EMU. 1 pt = 12,700 EMU.
 """
 
 EMU_PER_PT = 12700
 EMU_PER_INCH = 914400
 
-CANVAS_W = 10_000_000
-CANVAS_H = 5_625_000
+CANVAS_W = 9_144_000   # 10 inches
+CANVAS_H = 5_143_500   # 5.625 inches
 
-# ── Margins (0.75 inches = 54pt — industry recommended) ─────────
+# ── Margins ────────────────────────────────────────────────────────
 
 MARGIN = {
-    "top": 457_200,       # 36pt (0.5")
-    "bottom": 457_200,
-    "left": 685_800,      # 54pt (0.75")
-    "right": 685_800,
+    "top": 457_200,       # 0.5"
+    "bottom": 457_200,    # 0.5"
+    "left": 685_800,      # 0.75"
+    "right": 685_800,     # 0.75"
 }
 
 CONTENT = {
     "x": MARGIN["left"],
     "y": MARGIN["top"],
-    "w": CANVAS_W - MARGIN["left"] - MARGIN["right"],   # 8,628,400 (8.5")
-    "h": CANVAS_H - MARGIN["top"] - MARGIN["bottom"],   # 4,710,600 (4.625")
+    "w": CANVAS_W - MARGIN["left"] - MARGIN["right"],   # 7,772,400 (8.5")
+    "h": CANVAS_H - MARGIN["top"] - MARGIN["bottom"],   # 4,229,100 (4.625")
 }
 
-GUTTER = 254_000  # 20pt between columns/elements
+GUTTER = 228_600  # 0.25" between columns/elements
 
 
 # ── Typography ───────────────────────────────────────────────────
-# Scale: Perfect Fourth ratio (1.333x) — title ~1.9x body
 
 FONTS = {
     "heading": "Montserrat",
@@ -40,13 +39,13 @@ FONTS = {
 }
 
 FONT_SIZES = {
-    "slide_title": 26,       # clean, modern — fits long action titles on 1 line
+    "slide_title": 26,
     "subtitle": 18,
     "section_title": 36,
-    "body": 16,              # readable but compact
+    "body": 16,
     "sub_bullet": 14,
     "caption": 11,
-    "table_header": 14,      # bold, same visual weight as body
+    "table_header": 14,
     "table_value": 13,
     "metric_number": 48,
     "metric_label": 14,
@@ -60,12 +59,11 @@ FONT_SIZES = {
 
 LINE_SPACING = {
     "title": 110,
-    "body": 125,             # tighter — less vertical waste
+    "body": 125,
     "bullet": 120,
     "table": 115,
 }
 
-# Content density limits (for LLM guidance in tool descriptions)
 LIMITS = {
     "max_bullets_per_slide": 6,
     "max_words_per_bullet": 8,
@@ -91,7 +89,7 @@ PALETTES = {
         "accent_danger": "#EA4335",
         "white": "#FFFFFF",
         "table_header_bg": "#1A73E8",
-        "table_alt_row": "#F5F5F5",   # was #F4F6F9 — research says barely noticeable
+        "table_alt_row": "#F5F5F5",
         "table_border": "#E0E0E0",
         "divider": "#E0E0E0",
         "page_number": "#999999",
@@ -158,62 +156,78 @@ def get_palette(name: str | None = None) -> dict:
 
 
 # ── Layout positions (EMU) ───────────────────────────────────────
-# All positions respect 0.75" side margins, 0.5" top/bottom margins.
+# All positions computed from CANVAS_W/H and MARGIN. No hardcoded values.
 # Title position is IDENTICAL on every content slide (flip test).
 
-# Title + body layout: clean white background, dark text
-_TITLE = {"x": 685_800, "y": 457_200, "w": 8_628_400, "h": 762_000}  # 60pt tall, fits 2-line titles at 26pt
-_BODY_Y = 1_371_600  # title bottom + 12pt gap
-_BODY_H = 3_486_150  # remaining to footer area
+_CONTENT_W = CONTENT["w"]                              # 7,772,400
+_TITLE = {
+    "x": MARGIN["left"],
+    "y": MARGIN["top"],
+    "w": _CONTENT_W,
+    "h": 762_000,                                      # 60pt tall
+}
+_BODY_Y = _TITLE["y"] + _TITLE["h"] + 152_400         # title bottom + 12pt gap
+_BODY_H = CANVAS_H - _BODY_Y - MARGIN["bottom"]       # remaining to bottom margin
+
+def _centered(w: int, y: int, h: int) -> dict:
+    return {"x": (CANVAS_W - w) // 2, "y": y, "w": w, "h": h}
+
+_COL_W = (_CONTENT_W - GUTTER) // 2
 
 LAYOUT = {
     "title_slide": {
-        "title": {"x": 1_270_000, "y": 1_524_000, "w": 7_460_000, "h": 1_016_000},
-        "subtitle": {"x": 1_905_000, "y": 2_667_000, "w": 6_190_000, "h": 635_000},
-        "author": {"x": 2_540_000, "y": 3_429_000, "w": 4_920_000, "h": 381_000},
+        "title": _centered(6_858_000, 1_371_600, 914_400),
+        "subtitle": _centered(5_715_000, 2_400_300, 571_500),
+        "author": _centered(4_572_000, 3_086_100, 342_900),
     },
     "content": {
         "title": _TITLE,
-        "body": {"x": 685_800, "y": _BODY_Y, "w": 8_628_400, "h": _BODY_H},
+        "body": {"x": MARGIN["left"], "y": _BODY_Y, "w": _CONTENT_W, "h": _BODY_H},
     },
     "two_column": {
         "title": _TITLE,
-        "col1": {"x": 685_800, "y": _BODY_Y, "w": 4_187_200, "h": _BODY_H},
-        "col2": {"x": 5_127_000, "y": _BODY_Y, "w": 4_187_200, "h": _BODY_H},
+        "col1": {"x": MARGIN["left"], "y": _BODY_Y, "w": _COL_W, "h": _BODY_H},
+        "col2": {"x": MARGIN["left"] + _COL_W + GUTTER, "y": _BODY_Y, "w": _COL_W, "h": _BODY_H},
     },
     "image_text": {
         "title": _TITLE,
-        "image": {"x": 685_800, "y": _BODY_Y, "w": 3_886_200, "h": 3_429_000},
-        "text": {"x": 4_826_000, "y": _BODY_Y, "w": 4_488_200, "h": 3_429_000},
+        "image": {"x": MARGIN["left"], "y": _BODY_Y, "w": _COL_W, "h": _BODY_H},
+        "text": {"x": MARGIN["left"] + _COL_W + GUTTER, "y": _BODY_Y, "w": _COL_W, "h": _BODY_H},
     },
     "quote": {
-        "bar": {"x": 1_905_000, "y": 1_270_000, "w": 50_800, "h": 2_794_000},
-        "text": {"x": 2_286_000, "y": 1_270_000, "w": 6_350_000, "h": 2_286_000},
-        "attribution": {"x": 2_286_000, "y": 3_937_000, "w": 6_350_000, "h": 381_000},
+        "bar": {"x": (CANVAS_W - 5_715_000) // 2 - 228_600, "y": 1_143_000, "w": 45_720, "h": 2_514_600},
+        "text": {"x": (CANVAS_W - 5_715_000) // 2, "y": 1_143_000, "w": 5_715_000, "h": 2_057_400},
+        "attribution": {"x": (CANVAS_W - 5_715_000) // 2, "y": 3_429_000, "w": 5_715_000, "h": 342_900},
     },
     "section": {
-        "number": {"x": 685_800, "y": 1_524_000, "w": 8_628_400, "h": 635_000},
-        "title": {"x": 685_800, "y": 2_159_000, "w": 8_628_400, "h": 1_270_000},
-        "underline_x": 685_800,
-        "underline_y": 3_556_000,
-        "underline_w": 1_524_000,
+        "number": {"x": MARGIN["left"], "y": 1_371_600, "w": _CONTENT_W, "h": 571_500},
+        "title": {"x": MARGIN["left"], "y": 1_943_100, "w": _CONTENT_W, "h": 1_143_000},
+        "underline_x": MARGIN["left"],
+        "underline_y": 3_200_400,
+        "underline_w": 1_371_600,
     },
     "metrics": {
         "title": _TITLE,
-        "area_y": 1_524_000,
-        "number_h": 1_270_000,
-        "label_h": 508_000,
+        "area_y": _BODY_Y,
+        "number_h": 1_143_000,
+        "label_h": 457_200,
     },
     "table": {
         "title": _TITLE,
-        "table": {"x": 685_800, "y": _BODY_Y, "w": 8_628_400, "h": _BODY_H},
+        "table": {"x": MARGIN["left"], "y": _BODY_Y, "w": _CONTENT_W, "h": _BODY_H},
     },
-    "footer_line_y": 4_953_000,
+    "footer_line_y": CANVAS_H - MARGIN["bottom"] - 228_600,
     "footer": {
-        "x": 685_800, "y": 5_130_800, "w": 5_080_000, "h": 254_000,
+        "x": MARGIN["left"],
+        "y": CANVAS_H - MARGIN["bottom"] - 114_300,
+        "w": _CONTENT_W // 2,
+        "h": 228_600,
     },
     "page_number": {
-        "x": 8_686_800, "y": 5_130_800, "w": 635_000, "h": 254_000,
+        "x": CANVAS_W - MARGIN["right"] - 571_500,
+        "y": CANVAS_H - MARGIN["bottom"] - 114_300,
+        "w": 571_500,
+        "h": 228_600,
     },
 }
 
@@ -221,12 +235,12 @@ LAYOUT = {
 # ── Spacing (EMU) ────────────────────────────────────────────────
 
 SPACING = {
-    "title_to_body": 228_600,   # 18pt gap
+    "title_to_body": 228_600,
     "title_to_divider": 101_600,
     "divider_to_body": 152_400,
-    "between_paragraphs": 101_600,  # 8pt
-    "between_bullets": 76_200,      # 6pt
-    "image_to_text": 254_000,
+    "between_paragraphs": 101_600,
+    "between_bullets": 76_200,
+    "image_to_text": 228_600,
     "caption_gap": 101_600,
 }
 
@@ -237,8 +251,8 @@ BULLET_INDENT = {
 }
 
 TABLE_PADDING = {
-    "header_v": 76_200,     # 6pt — research says 4-6pt
-    "header_h": 101_600,    # 8pt — research says 6-10pt
-    "cell_v": 50_800,       # 4pt
-    "cell_h": 101_600,      # 8pt
+    "header_v": 76_200,
+    "header_h": 101_600,
+    "cell_v": 50_800,
+    "cell_h": 101_600,
 }
