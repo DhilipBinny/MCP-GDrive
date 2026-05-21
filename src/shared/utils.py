@@ -73,6 +73,45 @@ def hex_to_rgb(hex_color: str) -> dict:
     return {"red": r / 255.0, "green": g / 255.0, "blue": b / 255.0}
 
 
+NARROW_CHARS = set("iIlj1|!.,;:'`() ")
+WIDE_CHARS = set("MWmw@%&ÆŒØQ")
+
+# 15% safety margin — Google Slides renders wider than metrics due to
+# kerning, letter-spacing, and anti-aliasing differences across fonts.
+_RENDER_SAFETY = 1.15
+
+def estimate_text_width_pt(text: str, font_pt: float) -> float:
+    """Estimate rendered text width in points for proportional fonts.
+
+    Uses per-character width classes with a safety margin for rendering.
+    Returns width of the longest line if text contains newlines.
+    """
+    if not text:
+        return 0.0
+    max_w = 0.0
+    for line in text.split("\n"):
+        w = 0.0
+        for ch in line:
+            if ch in NARROW_CHARS:
+                w += font_pt * 0.38
+            elif ch in WIDE_CHARS:
+                w += font_pt * 0.78
+            elif ch.isupper():
+                w += font_pt * 0.66
+            else:
+                w += font_pt * 0.55
+        max_w = max(max_w, w)
+    return max_w * _RENDER_SAFETY
+
+
+def estimate_text_height_pt(text: str, font_pt: float) -> float:
+    """Estimate rendered text height in points (line count × line height)."""
+    if not text:
+        return 0.0
+    num_lines = text.count("\n") + 1
+    return num_lines * font_pt * 1.4
+
+
 def col_to_index(col: str) -> int:
     """Convert column letter to 0-based index: A->0, Z->25, AA->26."""
     result = 0

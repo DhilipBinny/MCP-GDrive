@@ -1721,6 +1721,7 @@ def normalize_fonts(
 
 def audit_styles(presentation_id: str) -> dict:
     """Analyze a deck and report style + layout inconsistencies for LLM-driven fixes."""
+    from shared.utils import estimate_text_width_pt
     service = _get_service()
     pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
 
@@ -1728,6 +1729,7 @@ def audit_styles(presentation_id: str) -> dict:
     sizes = {}
     colors = {}
     tables = []
+    overflow_shapes = []
     slide_count = len(pres.get("slides", []))
 
     title_positions = []
@@ -1738,8 +1740,9 @@ def audit_styles(presentation_id: str) -> dict:
     page_num_slides = set()
     footer_slides = set()
 
-    SLIDE_H_EMU = 5_625_000
-    TITLE_Y_THRESHOLD = SLIDE_H_EMU * 0.40
+    from .design import CANVAS_W, CANVAS_H, CONTENT, EMU_PER_PT
+    SHAPE_INSET_EMU = int(0.05 * EMU_PER_INCH)
+    TITLE_Y_THRESHOLD = CANVAS_H * 0.40
 
     for s_idx, slide in enumerate(pres.get("slides", [])):
         slide_num = s_idx + 1
@@ -1811,6 +1814,24 @@ def audit_styles(presentation_id: str) -> dict:
                     "score": score, "placeholder": is_placeholder,
                 })
 
+                # Text overflow detection — compare text width against shape width
+                elem_size = elem.get("size", {})
+                scale_x = abs(transform.get("scaleX", 1))
+                scale_y = abs(transform.get("scaleY", 1))
+                shape_w_emu = elem_size.get("width", {}).get("magnitude", 0) * scale_x
+                shape_h_emu = elem_size.get("height", {}).get("magnitude", 0) * scale_y
+                if shape_w_emu > 0 and max_font_in_elem > 0:
+                    text_area_w_pt = max(0, (shape_w_emu - 2 * SHAPE_INSET_EMU)) / EMU_PER_PT
+                    rendered_w_pt = estimate_text_width_pt(elem_text.strip(), max_font_in_elem)
+                    if rendered_w_pt > text_area_w_pt and text_area_w_pt > 0:
+                        overflow_shapes.append({
+                            "slide": slide_num, "id": obj_id,
+                            "text": elem_text.strip()[:30],
+                            "font_pt": int(max_font_in_elem),
+                            "text_w_pt": int(rendered_w_pt),
+                            "shape_w_pt": int(text_area_w_pt),
+                        })
+
             if table:
                 has_content = True
                 has_header_bg = False
@@ -1820,12 +1841,16 @@ def audit_styles(presentation_id: str) -> dict:
                     if bg.get("solidFill"):
                         has_header_bg = True
                         break
+                table_w_emu = elem.get("size", {}).get("width", {}).get("magnitude", 0)
+                table_w_emu *= abs(transform.get("scaleX", 1))
+                width_pct = (table_w_emu / CONTENT["w"] * 100) if CONTENT["w"] else 0
                 tables.append({
                     "slide": slide_num,
                     "object_id": obj_id,
                     "rows": table.get("rows", 0),
                     "columns": table.get("columns", 0),
                     "has_styled_header": has_header_bg,
+                    "width_pct": round(width_pct),
                 })
 
         # Title detection: pick candidate with highest score (needs >=2 signals)
@@ -1895,11 +1920,17 @@ def audit_styles(presentation_id: str) -> dict:
     if empty_slides:
         issues.append(f"Empty slides: {', '.join(str(s) for s in empty_slides)}")
 
-    missing_pn = [s for s in range(1, slide_count + 1) if s not in page_num_slides]
-    content_missing_footer = []
-    for s in range(2, slide_count + 1):
-        if s not in footer_slides and s in page_num_slides:
-            content_missing_footer.append(s)
+    if overflow_shapes:
+        overflow_by_slide: dict[int, int] = {}
+        for ov in overflow_shapes:
+            overflow_by_slide[ov["slide"]] = overflow_by_slide.get(ov["slide"], 0) + 1
+        overflow_summary = ", ".join(f"slide {s} ({c} shapes)" for s, c in sorted(overflow_by_slide.items())[:8])
+        issues.append(f"Text overflow in {len(overflow_shapes)} shapes: {overflow_summary}")
+
+    narrow_tables = [t for t in tables if t.get("width_pct", 100) < 85]
+    if narrow_tables:
+        for t in narrow_tables:
+            issues.append(f"Slide {t['slide']}: table only {t['width_pct']}% of content width — may look unbalanced")
 
     return {
         "slides": slide_count,
@@ -1907,6 +1938,7 @@ def audit_styles(presentation_id: str) -> dict:
         "font_sizes": dict(sorted(sizes.items(), key=lambda x: -x[1])),
         "text_colors": dict(sorted(colors.items(), key=lambda x: -x[1])[:8]),
         "tables": tables,
+        "overflow": overflow_shapes[:10] if overflow_shapes else [],
         "layout": {
             "titles_found": len(title_positions),
             "slides_without_title": slides_without_title,
