@@ -9,6 +9,8 @@ from shared.auth import get_credentials
 from shared.utils import execute_with_retry
 
 _service = None
+_deck_themes: dict[str, str] = {}
+_deck_footers: dict[str, str] = {}
 
 EMU_PER_INCH = 914400
 SLIDE_WIDTH = 9144000
@@ -43,6 +45,99 @@ def _emu_transform(x: int, y: int) -> dict:
     return {"scaleX": 1, "scaleY": 1, "translateX": x, "translateY": y, "unit": "EMU"}
 
 
+def set_deck_theme(presentation_id: str, theme: str) -> dict:
+    from .design import PALETTES
+    if theme not in PALETTES:
+        raise ValueError(f"Unknown theme: {theme}. Available: {list(PALETTES.keys())}")
+    _deck_themes[presentation_id] = theme
+    return {"presentation_id": presentation_id, "theme": theme}
+
+
+def get_deck_theme(presentation_id: str) -> str:
+    from .design import DEFAULT_PALETTE
+    return _deck_themes.get(presentation_id, DEFAULT_PALETTE)
+
+
+def set_deck_footer(presentation_id: str, footer: str) -> dict:
+    _deck_footers[presentation_id] = footer
+    return {"presentation_id": presentation_id, "footer": footer}
+
+
+def _resolve_theme(presentation_id: str, theme: str | None) -> str:
+    from .design import DEFAULT_PALETTE
+    if theme is not None:
+        return theme
+    return _deck_themes.get(presentation_id, DEFAULT_PALETTE)
+
+
+def _title_accent_reqs(slide_id: str, pal: dict) -> list[dict]:
+    from .design import LAYOUT
+    from shared.utils import hex_to_rgb
+    L = LAYOUT["title_accent"]
+    lid = _new_id()
+    return [
+        {"createLine": {
+            "objectId": lid, "category": "STRAIGHT",
+            "elementProperties": {
+                "pageObjectId": slide_id,
+                "size": _emu_size(L["w"], 0),
+                "transform": _emu_transform(L["x"], L["y"]),
+            },
+        }},
+        {"updateLineProperties": {
+            "objectId": lid,
+            "lineProperties": {
+                "lineFill": {"solidFill": {"color": {"rgbColor": hex_to_rgb(pal["accent"])}}},
+                "weight": {"magnitude": L["weight"], "unit": "PT"},
+            },
+            "fields": "lineFill,weight",
+        }},
+    ]
+
+
+def _page_number_reqs(slide_id: str, pal: dict, number: int) -> list[dict]:
+    from .design import LAYOUT, FONTS, FONT_SIZES
+    pn = LAYOUT["page_number"]
+    sid = _new_id()
+    return _text_box_reqs(sid, slide_id, str(number), pn,
+        font=FONTS["body"], size=FONT_SIZES["page_number"],
+        color=pal["page_number"], alignment="END")
+
+
+def _footer_reqs(slide_id: str, pal: dict, presentation_id: str) -> list[dict]:
+    footer = _deck_footers.get(presentation_id, "")
+    if not footer:
+        return []
+    from .design import LAYOUT, FONTS, FONT_SIZES
+    fid = _new_id()
+    return _text_box_reqs(fid, slide_id, footer, LAYOUT["footer"],
+        font=FONTS["body"], size=FONT_SIZES["page_number"],
+        color=pal["page_number"], alignment="START")
+
+
+def _get_slide_count(service, presentation_id: str) -> int:
+    pres = execute_with_retry(
+        service.presentations().get(presentationId=presentation_id, fields="slides.objectId"))
+    return len(pres.get("slides", []))
+
+
+def _polish_reqs(slide_id: str, pal: dict, presentation_id: str, service, accent_line: bool = True) -> list[dict]:
+    """Add accent line + page number + footer to a content slide."""
+    reqs = []
+    if accent_line:
+        reqs.extend(_title_accent_reqs(slide_id, pal))
+    slide_num = _get_slide_count(service, presentation_id) + 1
+    reqs.extend(_page_number_reqs(slide_id, pal, slide_num))
+    reqs.extend(_footer_reqs(slide_id, pal, presentation_id))
+    return reqs
+
+
+def _auto_column_widths(headers: list[str], table_w: int) -> list[int]:
+    lengths = [max(len(h), 3) for h in headers]
+    total = sum(lengths)
+    return [int(table_w * l / total) for l in lengths]
+
+
 def create_presentation(title: str) -> dict:
     service = _get_service()
     pres = execute_with_retry(
@@ -74,8 +169,12 @@ def add_slide(
     body: str = "",
     layout: str = "TITLE_AND_BODY",
     speaker_notes: str = "",
+    theme: str | None = None,
 ) -> dict:
+    from .design import FONTS, FONT_SIZES, get_palette
+    from shared.utils import hex_to_rgb
     service = _get_service()
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     title_id = _new_id()
     body_id = _new_id()
@@ -101,8 +200,30 @@ def add_slide(
 
     if title and has_title_placeholder:
         requests.append({"insertText": {"objectId": title_id, "text": title}})
+        requests.append({"updateTextStyle": {
+            "objectId": title_id,
+            "style": {
+                "fontFamily": FONTS["heading"],
+                "fontSize": {"magnitude": FONT_SIZES["slide_title"], "unit": "PT"},
+                "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(pal["primary_text"])}},
+                "bold": True,
+            },
+            "textRange": {"type": "ALL"},
+            "fields": "fontFamily,fontSize,foregroundColor,bold",
+        }})
+
     if body and has_body_placeholder:
         requests.append({"insertText": {"objectId": body_id, "text": body}})
+        requests.append({"updateTextStyle": {
+            "objectId": body_id,
+            "style": {
+                "fontFamily": FONTS["body"],
+                "fontSize": {"magnitude": FONT_SIZES["body"], "unit": "PT"},
+                "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(pal["primary_text"])}},
+            },
+            "textRange": {"type": "ALL"},
+            "fields": "fontFamily,fontSize,foregroundColor",
+        }})
 
     if body and has_body_placeholder and "\n" in body:
         requests.append({
@@ -132,82 +253,12 @@ def add_table_slide(
     title: str,
     headers: list[str],
     rows: list[list[str]],
+    theme: str | None = None,
 ) -> dict:
-    service = _get_service()
-    slide_id = _new_id()
-    title_id = _new_id()
-    table_id = _new_id()
-
-    num_rows = len(rows) + 1
-    num_cols = len(headers)
-    table_height = min(num_rows * 370000 + 200000, POSITIONS["table_centered"]["h"])
-
-    requests: list[dict] = [
-        {
-            "createSlide": {
-                "objectId": slide_id,
-                "slideLayoutReference": {"predefinedLayout": "TITLE_ONLY"},
-                "placeholderIdMappings": [
-                    {"layoutPlaceholder": {"type": "TITLE", "index": 0}, "objectId": title_id},
-                ],
-            }
-        },
-        {"insertText": {"objectId": title_id, "text": title}},
-        {
-            "createTable": {
-                "objectId": table_id,
-                "elementProperties": {
-                    "pageObjectId": slide_id,
-                    "size": _emu_size(POSITIONS["table_centered"]["w"], table_height),
-                    "transform": _emu_transform(
-                        POSITIONS["table_centered"]["x"], POSITIONS["table_centered"]["y"]
-                    ),
-                },
-                "rows": num_rows,
-                "columns": num_cols,
-            }
-        },
-    ]
-
-    for c_idx, header in enumerate(headers):
-        requests.append({
-            "insertText": {
-                "objectId": table_id,
-                "cellLocation": {"rowIndex": 0, "columnIndex": c_idx},
-                "text": header,
-            }
-        })
-
-    for r_idx, row in enumerate(rows):
-        for c_idx, cell in enumerate(row):
-            if c_idx < num_cols:
-                requests.append({
-                    "insertText": {
-                        "objectId": table_id,
-                        "cellLocation": {"rowIndex": r_idx + 1, "columnIndex": c_idx},
-                        "text": str(cell),
-                    }
-                })
-
-    # Bold header row
-    for c_idx in range(num_cols):
-        requests.append({
-            "updateTextStyle": {
-                "objectId": table_id,
-                "cellLocation": {"rowIndex": 0, "columnIndex": c_idx},
-                "style": {"bold": True},
-                "textRange": {"type": "ALL"},
-                "fields": "bold",
-            }
-        })
-
-    execute_with_retry(
-        service.presentations().batchUpdate(
-            presentationId=presentation_id,
-            body={"requests": requests},
-        )
-    )
-    return {"slide_id": slide_id, "title": title, "table": f"{num_rows}x{num_cols}"}
+    """Legacy table slide — now redirects to styled table with design system."""
+    return add_styled_table_slide(
+        presentation_id, title, headers, rows,
+        _resolve_theme(presentation_id, theme))
 
 
 def add_image_slide(
@@ -215,8 +266,12 @@ def add_image_slide(
     image_url: str,
     title: str = "",
     as_background: bool = False,
+    theme: str | None = None,
 ) -> dict:
+    from .design import FONTS, FONT_SIZES, get_palette
+    from shared.utils import hex_to_rgb
     service = _get_service()
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     title_id = _new_id()
     image_id = _new_id()
@@ -236,6 +291,17 @@ def add_image_slide(
 
     if title:
         requests.append({"insertText": {"objectId": title_id, "text": title}})
+        requests.append({"updateTextStyle": {
+            "objectId": title_id,
+            "style": {
+                "fontFamily": FONTS["heading"],
+                "fontSize": {"magnitude": FONT_SIZES["slide_title"], "unit": "PT"},
+                "foregroundColor": {"opaqueColor": {"rgbColor": hex_to_rgb(pal["primary_text"])}},
+                "bold": True,
+            },
+            "textRange": {"type": "ALL"},
+            "fields": "fontFamily,fontSize,foregroundColor,bold",
+        }})
 
     if as_background:
         requests.append({
@@ -380,12 +446,7 @@ SHAPE_ALIASES = {
 
 SIDE_MAP = {"top": 0, "right": 1, "bottom": 2, "left": 3}
 
-PALETTES = {
-    "corporate": ["#4285F4", "#34A853", "#FBBC04", "#EA4335", "#5F6368", "#1A73E8"],
-    "tech": ["#E94560", "#0F3460", "#533483", "#16213E", "#1A1A2E", "#950740"],
-    "minimal": ["#FFFFFF", "#F1F3F4", "#E8EAED", "#DADCE0", "#BDC1C6", "#9AA0A6"],
-    "colorful": ["#4285F4", "#EA4335", "#FBBC04", "#34A853", "#FF6D01", "#46BDC6"],
-}
+_DIAGRAM_STYLE_MIGRATION = {"corporate": "modern", "tech": "dark", "minimal": "modern", "colorful": "warm"}
 
 
 def _inches(val: float) -> int:
@@ -650,6 +711,7 @@ def add_diagram(
     nodes: list[dict],
     connections: list[dict] | None = None,
     style: str = "corporate",
+    theme: str | None = None,
 ) -> dict:
     """Create a diagram slide with nodes and connectors in a single batch.
 
@@ -658,10 +720,14 @@ def add_diagram(
        If x/y omitted, auto-layout by tier.
     connections: [{"from": "n1", "to": "n2", "from_side": "bottom", "to_side": "top", "label": "HTTPS"}, ...]
     """
+    from .design import get_palette
     service = _get_service()
     slide_id = _new_id()
     title_id = _new_id()
-    palette = PALETTES.get(style, PALETTES["corporate"])
+    # Migrate old style names to theme names
+    resolved = theme or _DIAGRAM_STYLE_MIGRATION.get(style, _resolve_theme(presentation_id, None))
+    pal = get_palette(resolved)
+    palette = pal.get("diagram_series", ["#4285F4", "#34A853", "#FBBC04", "#EA4335", "#5F6368"])
 
     # Auto-layout nodes that don't have explicit x/y
     _auto_layout(nodes, palette)
@@ -950,12 +1016,12 @@ def _set_bg_reqs(slide_id: str, pal: dict) -> list[dict]:
 
 def add_title_slide(
     presentation_id: str, title: str, subtitle: str = "",
-    author: str = "", theme: str = "modern",
+    author: str = "", theme: str | None = None,
 ) -> dict:
     """Create a professional title slide."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["title_slide"]
 
@@ -989,13 +1055,13 @@ def add_title_slide(
 
 def add_section_slide(
     presentation_id: str, title: str, section_number: str = "",
-    theme: str = "modern",
+    theme: str | None = None,
 ) -> dict:
     """Create a section divider slide with accent background."""
     from .design import LAYOUT, FONTS, FONT_SIZES, CANVAS_W, CANVAS_H, get_palette
     from shared.utils import hex_to_rgb
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["section"]
 
@@ -1049,12 +1115,12 @@ def add_section_slide(
 
 def add_content_slide(
     presentation_id: str, title: str, body: str,
-    speaker_notes: str = "", theme: str = "modern",
+    speaker_notes: str = "", theme: str | None = None,
 ) -> dict:
     """Create a content slide with design-system typography (Montserrat/Open Sans)."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["content"]
 
@@ -1083,6 +1149,7 @@ def add_content_slide(
             "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE",
         }})
 
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
 
@@ -1094,12 +1161,12 @@ def add_content_slide(
 
 def add_two_column_slide(
     presentation_id: str, title: str, col1: str, col2: str,
-    col1_title: str = "", col2_title: str = "", theme: str = "modern",
+    col1_title: str = "", col2_title: str = "", theme: str | None = None,
 ) -> dict:
     """Create a two-column content slide."""
     from .design import LAYOUT, FONTS, FONT_SIZES, GUTTER, get_palette
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["two_column"]
 
@@ -1144,6 +1211,7 @@ def add_two_column_slide(
             "fields": "bold,fontSize",
         }})
 
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
     return {"slide_id": slide_id, "title": title}
@@ -1151,12 +1219,12 @@ def add_two_column_slide(
 
 def add_image_text_slide(
     presentation_id: str, title: str, image_url: str, text: str,
-    image_side: str = "left", theme: str = "modern",
+    image_side: str = "left", theme: str | None = None,
 ) -> dict:
     """Create an image + text slide (image left or right)."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["image_text"]
 
@@ -1189,6 +1257,7 @@ def add_image_text_slide(
         font=FONTS["body"], size=FONT_SIZES["body"],
         color=pal["primary_text"], alignment="START", line_spacing=150))
 
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
     return {"slide_id": slide_id, "title": title, "image_side": image_side}
@@ -1196,13 +1265,13 @@ def add_image_text_slide(
 
 def add_quote_slide(
     presentation_id: str, quote: str, attribution: str = "",
-    theme: str = "modern",
+    theme: str | None = None,
 ) -> dict:
     """Create a quote slide with accent bar."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     from shared.utils import hex_to_rgb
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["quote"]
 
@@ -1251,13 +1320,13 @@ def add_quote_slide(
 
 def add_metrics_slide(
     presentation_id: str, title: str, metrics: list[dict],
-    theme: str = "modern",
+    theme: str | None = None,
 ) -> dict:
     """Create a big-numbers metrics slide. metrics: [{"value": "98%", "label": "Uptime"}, ...]"""
     from .design import LAYOUT, FONTS, FONT_SIZES, CONTENT, GUTTER, get_palette
     from shared.utils import hex_to_rgb
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["metrics"]
 
@@ -1292,6 +1361,7 @@ def add_metrics_slide(
             font=FONTS["body"], size=FONT_SIZES["metric_label"],
             color=pal["secondary_text"], alignment="CENTER"))
 
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
     return {"slide_id": slide_id, "title": title, "metrics_count": n}
@@ -1299,13 +1369,13 @@ def add_metrics_slide(
 
 def add_styled_table_slide(
     presentation_id: str, title: str, headers: list[str],
-    rows: list[list[str]], theme: str = "modern",
+    rows: list[list[str]], theme: str | None = None,
 ) -> dict:
     """Create a table slide with professional styling: colored header, alternating rows, borders."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     from shared.utils import hex_to_rgb
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     title_id = _new_id()
     table_id = _new_id()
@@ -1423,6 +1493,17 @@ def add_styled_table_slide(
         "fields": "tableBorderFill,weight,dashStyle",
     }})
 
+    # Auto-size columns proportionally
+    col_widths = _auto_column_widths(headers, L["table"]["w"])
+    for c, width in enumerate(col_widths):
+        reqs.append({"updateTableColumnProperties": {
+            "objectId": table_id,
+            "columnIndices": [c],
+            "tableColumnProperties": {"columnWidth": {"magnitude": width, "unit": "EMU"}},
+            "fields": "columnWidth",
+        }})
+
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
     return {"slide_id": slide_id, "title": title, "table": f"{num_rows}x{num_cols}"}
@@ -1435,7 +1516,7 @@ def add_chart_slide(
     """Embed a Sheets chart onto a slide."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     service = _get_service()
-    pal = get_palette()
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["content"]
 
@@ -1464,6 +1545,7 @@ def add_chart_slide(
         },
     }})
 
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
     return {"slide_id": slide_id, "title": title, "chart_object_id": chart_obj_id}
@@ -1592,13 +1674,13 @@ def ungroup_elements(presentation_id: str, group_ids: list[str]) -> dict:
 
 def add_code_slide(
     presentation_id: str, title: str, code: str,
-    language: str = "", theme: str = "modern",
+    language: str = "", theme: str | None = None,
 ) -> dict:
     """Create a slide with a styled code block (dark background, mono font)."""
     from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     from shared.utils import hex_to_rgb
     service = _get_service()
-    pal = get_palette(theme)
+    pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
     L = LAYOUT["content"]
 
@@ -1658,9 +1740,53 @@ def add_code_slide(
         font=FONTS["mono"], size=13, color="#D4D4D4",
         alignment="START", line_spacing=130))
 
+    reqs.extend(_polish_reqs(slide_id, pal, presentation_id, service))
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=presentation_id, body={"requests": reqs}))
     return {"slide_id": slide_id, "title": title}
+
+
+def update_table_columns(
+    presentation_id: str, table_id: str, column_widths: list[float],
+) -> dict:
+    """Set column widths for a table. Widths in inches."""
+    service = _get_service()
+    reqs = []
+    for c, w in enumerate(column_widths):
+        reqs.append({"updateTableColumnProperties": {
+            "objectId": table_id,
+            "columnIndices": [c],
+            "tableColumnProperties": {"columnWidth": {"magnitude": _inches(w), "unit": "EMU"}},
+            "fields": "columnWidth",
+        }})
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id, body={"requests": reqs}))
+    return {"table_id": table_id, "columns": len(column_widths)}
+
+
+def add_page_numbers(presentation_id: str, theme: str | None = None) -> dict:
+    """Add page numbers to all slides (skips slides with colored backgrounds)."""
+    from .design import get_palette
+    service = _get_service()
+    pal = get_palette(_resolve_theme(presentation_id, theme))
+    pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
+    slides = pres.get("slides", [])
+
+    all_reqs = []
+    numbered = 0
+    for i, slide in enumerate(slides):
+        slide_id = slide["objectId"]
+        # Skip slides with colored backgrounds (section dividers, title slides)
+        bg = slide.get("slideProperties", {}).get("pageBackgroundFill", {})
+        if bg.get("solidFill") and bg["solidFill"].get("color", {}).get("rgbColor", {}) != {"red": 1, "green": 1, "blue": 1}:
+            continue
+        numbered += 1
+        all_reqs.extend(_page_number_reqs(slide_id, pal, i + 1))
+
+    if all_reqs:
+        execute_with_retry(service.presentations().batchUpdate(
+            presentationId=presentation_id, body={"requests": all_reqs}))
+    return {"slides_numbered": numbered, "total_slides": len(slides)}
 
 
 def _extract_text(text_elements: list) -> str:

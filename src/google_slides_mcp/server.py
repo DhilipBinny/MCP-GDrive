@@ -462,6 +462,73 @@ def gslides_duplicate_slide(presentation_id: str, slide_id: str) -> str:
 
 @mcp.tool()
 @_handle_errors
+def gslides_set_theme(
+    presentation_id: str,
+    theme: str,
+) -> str:
+    """Set the default color theme for a presentation. All subsequent slides inherit this
+    theme unless explicitly overridden. Available: modern (blue), corporate (navy), dark, warm.
+
+    Args:
+        presentation_id: The presentation ID
+        theme: Theme name — modern, corporate, dark, warm
+    """
+    result = slides_service.set_deck_theme(presentation_id, theme)
+    return f"Theme set to **{result['theme']}** for `{result['presentation_id']}`"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_set_footer(
+    presentation_id: str,
+    footer: str,
+) -> str:
+    """Set footer text for a presentation (e.g. course name, company name).
+    Appears on all subsequent content slides (not title/section slides).
+
+    Args:
+        presentation_id: The presentation ID
+        footer: Footer text (e.g. "BSAI-101: Agents & LLMs")
+    """
+    result = slides_service.set_deck_footer(presentation_id, footer)
+    return f"Footer set: **{result['footer']}**"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_add_page_numbers(
+    presentation_id: str,
+) -> str:
+    """Add page numbers to all slides in an existing presentation.
+    Skips slides with colored backgrounds (section dividers, title slides).
+
+    Args:
+        presentation_id: The presentation ID
+    """
+    result = slides_service.add_page_numbers(presentation_id)
+    return f"Added page numbers to {result['slides_numbered']}/{result['total_slides']} slides"
+
+
+@mcp.tool()
+@_handle_errors
+def gslides_update_table_columns(
+    presentation_id: str,
+    table_id: str,
+    column_widths: list[float],
+) -> str:
+    """Set column widths for a table. Widths in inches.
+
+    Args:
+        presentation_id: The presentation ID
+        table_id: The table element object ID (from gslides_read)
+        column_widths: Width for each column in inches (e.g. [3.0, 2.0, 2.0])
+    """
+    result = slides_service.update_table_columns(presentation_id, table_id, column_widths)
+    return f"Set {result['columns']} column widths on table `{result['table_id']}`"
+
+
+@mcp.tool()
+@_handle_errors
 def gslides_add_title_slide(
     presentation_id: str,
     title: str,

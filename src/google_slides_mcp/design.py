@@ -81,6 +81,7 @@ PALETTES = {
         "table_border": "#E0E0E0",
         "divider": "#E0E0E0",
         "page_number": "#999999",
+        "diagram_series": ["#1A73E8", "#34A853", "#FBBC04", "#EA4335", "#5F6368", "#0A84FF"],
     },
     "corporate": {
         "background": "#FFFFFF",
@@ -97,6 +98,7 @@ PALETTES = {
         "table_border": "#D0D5DD",
         "divider": "#D0D5DD",
         "page_number": "#999999",
+        "diagram_series": ["#2B5797", "#E8792F", "#D4A843", "#5F6B7A", "#1B2A4A", "#4A90C4"],
     },
     "dark": {
         "background": "#1A1A1A",
@@ -113,6 +115,7 @@ PALETTES = {
         "table_border": "#3A3A3A",
         "divider": "#3A3A3A",
         "page_number": "#666666",
+        "diagram_series": ["#0A84FF", "#30D158", "#FFD60A", "#FF453A", "#A1A1A6", "#BF5AF2"],
     },
     "warm": {
         "background": "#FEFCF9",
@@ -129,6 +132,7 @@ PALETTES = {
         "table_border": "#DDD5CC",
         "divider": "#DDD5CC",
         "page_number": "#999999",
+        "diagram_series": ["#C45B28", "#2B6777", "#D4A843", "#706B66", "#2D2926", "#8B5E3C"],
     },
 }
 
@@ -182,6 +186,15 @@ LAYOUT = {
     "table": {
         "title": {"x": 508_000, "y": 254_000, "w": 8_984_000, "h": 635_000},
         "table": {"x": 508_000, "y": 1_143_000, "w": 8_984_000, "h": 4_100_000},
+    },
+    "title_accent": {
+        "x": 508_000,
+        "y": 955_800,
+        "w": 1_524_000,
+        "weight": 2.5,
+    },
+    "footer": {
+        "x": 508_000, "y": 5_130_800, "w": 5_080_000, "h": 254_000,
     },
     "page_number": {
         "x": 9_017_000, "y": 5_130_800, "w": 635_000, "h": 254_000,
