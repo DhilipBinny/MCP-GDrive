@@ -179,13 +179,16 @@ def gslides_add_shape(
     shape_type: str = "rounded",
     x: float = 1.0, y: float = 1.0,
     width: float = 2.0, height: float = 0.7,
-    fill_color: str = "#4285F4",
-    text_color: str = "#FFFFFF",
+    fill_color: str | None = None,
+    text_color: str | None = None,
     font_size: int = 10,
     bold: bool = False,
     outline_color: str | None = None,
 ) -> str:
     """Add a shape to an existing slide. Returns the shape object ID.
+
+    Colors default to the deck theme (set via gslides_set_theme). Text color
+    auto-contrasts: white on dark fills, dark on light fills.
 
     Coordinates in inches. Standard slide is 10 x 5.625 inches.
     Shape types: rounded, rectangle, circle, diamond, database, cloud,
@@ -200,8 +203,8 @@ def gslides_add_shape(
         y: Y position in inches from top
         width: Width in inches
         height: Height in inches
-        fill_color: Background color hex "#RRGGBB"
-        text_color: Text color hex "#RRGGBB"
+        fill_color: Fill color hex (default: theme accent)
+        text_color: Text color hex (default: auto-contrast based on fill)
         font_size: Font size in points
         bold: Bold text
         outline_color: Optional border color hex
@@ -223,11 +226,11 @@ def gslides_add_connector(
     from_side: str = "bottom",
     to_side: str = "top",
     connector_type: str = "STRAIGHT",
-    color: str = "#80868B",
-    weight: float = 2.0,
+    color: str | None = None,
+    weight: float = 1.5,
     end_arrow: str = "OPEN_ARROW",
 ) -> str:
-    """Connect two shapes with a line/arrow. Uses smart connectors that snap to shape edges.
+    """Connect two shapes with a line/arrow. Color defaults to theme neutral gray.
 
     Args:
         presentation_id: The presentation ID
@@ -237,8 +240,8 @@ def gslides_add_connector(
         from_side: Side to connect from — top, right, bottom, left
         to_side: Side to connect to — top, right, bottom, left
         connector_type: STRAIGHT, BENT, or CURVED
-        color: Line color hex
-        weight: Line weight in points
+        color: Line color hex (default: theme neutral gray)
+        weight: Line weight in points (default: 1.5)
         end_arrow: Arrow style — OPEN_ARROW, FILL_ARROW, STEALTH_ARROW, NONE
     """
     result = slides_service.add_connector(
@@ -257,10 +260,10 @@ def gslides_add_text_box(
     x: float = 1.0, y: float = 1.0,
     width: float = 2.0, height: float = 0.5,
     font_size: int = 9,
-    font_color: str = "#5F6368",
+    font_color: str | None = None,
     bold: bool = False,
 ) -> str:
-    """Add a text label to a slide (no background/border). For annotations and labels.
+    """Add a text label to a slide (no background/border). Color defaults to theme secondary text.
 
     Args:
         presentation_id: The presentation ID
@@ -271,7 +274,7 @@ def gslides_add_text_box(
         width: Width in inches
         height: Height in inches
         font_size: Font size in points
-        font_color: Text color hex
+        font_color: Text color hex (default: theme secondary text)
         bold: Bold text
     """
     result = slides_service.add_text_box(

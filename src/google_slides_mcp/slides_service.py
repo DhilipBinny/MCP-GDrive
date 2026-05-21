@@ -600,6 +600,16 @@ def _connector_requests(lid: str, slide_id: str, from_id: str, to_id: str, conn:
     return reqs
 
 
+def _auto_text_color(fill_hex: str) -> str:
+    """Return white or dark text based on fill luminance."""
+    h = fill_hex.strip().lstrip("#")
+    if len(h) == 3:
+        h = h[0]*2 + h[1]*2 + h[2]*2
+    r, g, b = int(h[0:2], 16) / 255, int(h[2:4], 16) / 255, int(h[4:6], 16) / 255
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#FFFFFF" if luminance < 0.5 else "#202124"
+
+
 def add_shape(
     presentation_id: str,
     slide_id: str,
@@ -607,17 +617,21 @@ def add_shape(
     x: float = 1.0, y: float = 1.0,
     width: float = 2.0, height: float = 0.7,
     text: str = "",
-    fill_color: str = "#4285F4",
-    text_color: str = "#FFFFFF",
+    fill_color: str | None = None,
+    text_color: str | None = None,
     font_size: int = 10,
     bold: bool = False,
     outline_color: str | None = None,
 ) -> dict:
+    from .design import get_palette
     service = _get_service()
+    pal = get_palette(_resolve_theme(presentation_id, None))
+    resolved_fill = fill_color or pal["accent"]
+    resolved_text = text_color or _auto_text_color(resolved_fill)
     sid = _new_id()
     shape = {
         "type": shape_type, "x": x, "y": y, "w": width, "h": height,
-        "text": text, "fill_color": fill_color, "font_color": text_color,
+        "text": text, "fill_color": resolved_fill, "font_color": resolved_text,
         "font_size": font_size, "bold": bold, "outline_color": outline_color,
     }
     reqs = _shape_requests(sid, slide_id, shape)
@@ -635,15 +649,17 @@ def add_connector(
     from_side: str = "bottom",
     to_side: str = "top",
     connector_type: str = "STRAIGHT",
-    color: str = "#80868B",
-    weight: float = 2.0,
+    color: str | None = None,
+    weight: float = 1.5,
     end_arrow: str = "OPEN_ARROW",
 ) -> dict:
+    from .design import get_palette
     service = _get_service()
+    pal = get_palette(_resolve_theme(presentation_id, None))
     lid = _new_id()
     conn = {
         "connector_type": connector_type, "from_side": from_side, "to_side": to_side,
-        "color": color, "weight": weight, "end_arrow": end_arrow,
+        "color": color or pal["secondary_text"], "weight": weight, "end_arrow": end_arrow,
     }
     reqs = _connector_requests(lid, slide_id, from_shape_id, to_shape_id, conn)
     execute_with_retry(
@@ -659,12 +675,15 @@ def add_text_box(
     x: float = 1.0, y: float = 1.0,
     width: float = 2.0, height: float = 0.5,
     font_size: int = 9,
-    font_color: str = "#5F6368",
+    font_color: str | None = None,
     bold: bool = False,
     alignment: str = "CENTER",
 ) -> dict:
+    from .design import get_palette
     service = _get_service()
+    pal = get_palette(_resolve_theme(presentation_id, None))
     sid = _new_id()
+    font_color = font_color or pal["secondary_text"]
     from shared.utils import hex_to_rgb
     reqs = [
         {
