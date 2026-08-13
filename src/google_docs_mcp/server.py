@@ -10,6 +10,7 @@ from typing import Literal
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from googleapiclient.errors import HttpError
 
 from . import docs_service, formatter
@@ -100,7 +101,7 @@ def _handle_errors(func):
 # TOOL 1: CREATE
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gdocs_create(title: str, folder_id: str | None = None) -> str:
     """Create a new Google Doc. Optionally place it in a specific Drive folder.
@@ -122,7 +123,7 @@ def gdocs_create(title: str, folder_id: str | None = None) -> str:
 # TOOL 2: READ (all read operations via `action` parameter)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_handle_errors
 def gdocs_read(
     document_id: str,
@@ -181,7 +182,7 @@ def gdocs_read(
 # TOOL 3: WRITE (all content-writing operations via `action`)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gdocs_write(
     document_id: str,
@@ -476,7 +477,7 @@ def gdocs_write(
 # TOOL 4: EDIT (formatting, auditing, table editing)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gdocs_edit(
     document_id: str,
@@ -626,7 +627,7 @@ def gdocs_edit(
 # DRIVE TOOLS (shared)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_handle_errors
 def gdrive_search(query: str, max_results: int = 20) -> str:
     """Search for files in Google Drive by name or content.
@@ -647,7 +648,7 @@ def gdrive_search(query: str, max_results: int = 20) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_handle_errors
 def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> str:
     """List files in a Google Drive folder.
@@ -668,7 +669,7 @@ def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> s
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gdrive_ops(
     action: str,
