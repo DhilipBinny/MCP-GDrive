@@ -285,6 +285,9 @@ def gslides_add_slide(
     else:
         return f"ERROR: Unknown slide type '{type}'. Use: title, section, content, two_column, table, metrics, quote, code, image_text, chart, image, blank, from_layout"
 
+    if speaker_notes and t not in ("content", "blank"):
+        slides_service.set_speaker_notes(presentation_id, r["slide_id"], speaker_notes)
+
     return f"Added {t} slide: **{r.get('title', title or quote[:30])}** (`{r['slide_id']}`)"
 
 
@@ -301,6 +304,7 @@ def gslides_edit(
     table_id: str = "",
     font_family: str | None = None,
     font_size: float | None = None,
+    header_font_size: float | None = None,
     bold: bool | None = None,
     italic: bool | None = None,
     color: str | None = None,
@@ -337,7 +341,7 @@ def gslides_edit(
     ACTIONS:
     - "text_style" — change font/size/color on element (uses: element_id, font_family, font_size, bold, italic, color)
     - "shape_fill" — change fill/outline on shape (uses: element_id, fill_color, outline_color, outline_weight)
-    - "table_style" — style a table (uses: table_id, header_bg, alt_row_color, border_color, font_family, font_size)
+    - "table_style" — style a table (uses: table_id, header_bg, alt_row_color, border_color, font_family, font_size, header_font_size)
     - "normalize_fonts" — replace fonts across deck (uses: target_font, replace_fonts)
     - "brand_kit" — enforce brand across deck (uses: heading_font, body_font, accent_color, text_color, replace_fonts)
     - "hyperlink" — add link to text (uses: element_id, url)
@@ -350,7 +354,8 @@ def gslides_edit(
         element_id: Target element ID (from gslides_read)
         table_id: Target table ID (for table_style)
         font_family: Font family
-        font_size: Font size in pt
+        font_size: Font size in pt (used for cell text; also header if header_font_size not set)
+        header_font_size: Font size in pt for table header text (defaults to font_size)
         bold: Bold text
         italic: Italic text
         color: Text color hex
@@ -382,7 +387,7 @@ def gslides_edit(
         r = slides_service.update_shape_fill(presentation_id, element_id, fill_color, outline_color, outline_weight)
         return f"Updated shape `{r['element_id']}`" if r["updated"] else "No changes"
     elif a == "table_style":
-        r = slides_service.style_existing_table(presentation_id, table_id, header_bg, header_text_color, alt_row_color, border_color, font_size, font_size, font_family)
+        r = slides_service.style_existing_table(presentation_id, table_id, header_bg, header_text_color, alt_row_color, border_color, header_font_size if header_font_size is not None else font_size, font_size, font_family)
         return f"Styled table `{r['table_id']}` ({r['rows']}x{r['cols']})"
     elif a == "normalize_fonts":
         r = slides_service.normalize_fonts(presentation_id, target_font, replace_fonts or [])
@@ -461,8 +466,8 @@ def gslides_manage(
     - "batch_replace" — replace multiple placeholders (uses: replacements={"{{key}}": "value"})
     - "replace_image" — replace shapes with image (uses: placeholder_text, image_url)
     - "speaker_notes" — set notes (uses: slide_id, notes)
-    - "set_theme" — set deck theme (uses: theme=modern/corporate/dark/warm)
-    - "set_footer" — set deck footer (uses: footer)
+    - "set_theme" — set deck theme (uses: theme=modern/corporate/dark/warm). Session-scoped: resets on server restart.
+    - "set_footer" — set deck footer (uses: footer). Session-scoped: resets on server restart.
     - "add_page_numbers" — add page numbers to all slides
     - "get_thumbnail" — get slide PNG URL (uses: slide_id)
     - "insert_table_rows" — add rows (uses: table_id, row_index, count)
