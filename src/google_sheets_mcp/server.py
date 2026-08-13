@@ -215,6 +215,7 @@ def gsheets_write(
     cell_range: str = "",
     values: list[list] | None = None,
     input_mode: Literal["user", "raw"] = "user",
+    date_format: str = "",
 ) -> str:
     """Write, append, or clear data in a spreadsheet.
 
@@ -223,9 +224,11 @@ def gsheets_write(
     - Use action="append" to add rows without overwriting — it finds the last row automatically
     - Use action="clear" to erase values while preserving formatting and borders
     - Always include headers in the first write to a new range
+    - Use date_format when writing date values to ensure they display correctly
+      (e.g. "yyyy-MM-dd", "MM/dd/yyyy", "dd/MM/yyyy", "MMM d, yyyy")
 
     ACTIONS:
-    - "write" — overwrite a range with new values (uses: range, values, input_mode)
+    - "write" — overwrite a range with new values (uses: range, values, input_mode, date_format)
     - "append" — append rows after the last data row (uses: range, values)
     - "clear" — clear all values in a range, formatting preserved (uses: range)
 
@@ -235,6 +238,9 @@ def gsheets_write(
         range: A1 notation range (e.g. "Sheet1!A1:C3", "A1")
         values: 2D array of values — [[row1col1, row1col2], [row2col1, row2col2]]
         input_mode: For write — "user" (parse formulas/dates) or "raw" (literal strings)
+        date_format: Date format pattern for write action (e.g. "yyyy-MM-dd"). When set,
+            applies a DATE number format to the written range so dates display correctly
+            instead of as serial numbers.
     """
     a = action.lower()
 
@@ -244,7 +250,10 @@ def gsheets_write(
         if not values:
             return "ERROR: values is required for write action."
         option = "USER_ENTERED" if input_mode == "user" else "RAW"
-        result = sheets_service.write_range(spreadsheet_id, cell_range, values, option)
+        result = sheets_service.write_range(
+            spreadsheet_id, cell_range, values, option,
+            date_format=date_format or None,
+        )
         return f"Wrote {result['updated_cells']} cells to `{result['updated_range']}`"
 
     elif a == "append":
