@@ -652,6 +652,91 @@ def unmerge_cells(
     return {"unmerged_range": range_str}
 
 
+def insert_dimension(
+    spreadsheet_id: str,
+    sheet_name: str | None,
+    dimension: str,
+    index: int,
+    count: int = 1,
+) -> dict:
+    """Insert empty rows or columns.
+
+    Args:
+        dimension: "ROWS" or "COLUMNS"
+        index: 0-based index to insert before
+        count: number of rows/columns to insert
+    """
+    service = _get_service()
+    sheet_id, resolved_name = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+
+    request = {
+        "insertDimension": {
+            "range": {
+                "sheetId": sheet_id,
+                "dimension": dimension.upper(),
+                "startIndex": index,
+                "endIndex": index + count,
+            },
+            "inheritFromBefore": index > 0,
+        }
+    }
+
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [request]},
+        )
+    )
+    return {
+        "sheet_name": resolved_name,
+        "dimension": dimension.upper(),
+        "index": index,
+        "count": count,
+    }
+
+
+def delete_dimension(
+    spreadsheet_id: str,
+    sheet_name: str | None,
+    dimension: str,
+    index: int,
+    count: int = 1,
+) -> dict:
+    """Delete rows or columns.
+
+    Args:
+        dimension: "ROWS" or "COLUMNS"
+        index: 0-based start index
+        count: number of rows/columns to delete
+    """
+    service = _get_service()
+    sheet_id, resolved_name = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+
+    request = {
+        "deleteDimension": {
+            "range": {
+                "sheetId": sheet_id,
+                "dimension": dimension.upper(),
+                "startIndex": index,
+                "endIndex": index + count,
+            }
+        }
+    }
+
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [request]},
+        )
+    )
+    return {
+        "sheet_name": resolved_name,
+        "dimension": dimension.upper(),
+        "index": index,
+        "count": count,
+    }
+
+
 def add_borders(
     spreadsheet_id: str,
     range_str: str,
