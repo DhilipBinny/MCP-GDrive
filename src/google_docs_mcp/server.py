@@ -130,6 +130,8 @@ def gdocs_read(
     action: str = "full",
     heading_text: str = "",
     format: Literal["text", "markdown"] = "markdown",
+    parent_heading: str = "",
+    occurrence: int = 1,
 ) -> str:
     """Read content from a Google Doc. The `action` parameter selects what to read.
 
@@ -138,7 +140,7 @@ def gdocs_read(
 
     ACTIONS:
     - "full" — read the entire document (uses: format)
-    - "section" — read a specific section by heading (uses: heading_text, format)
+    - "section" — read a specific section by heading (uses: heading_text, format, parent_heading, occurrence)
     - "structure" — document outline with headings, tables, and index ranges
 
     Args:
@@ -146,6 +148,11 @@ def gdocs_read(
         action: Read mode (see above)
         heading_text: Section heading text for action="section" (supports partial match, e.g. "4.3" matches "4.3 Estimated Cost")
         format: Output format — "text" (plain) or "markdown" (with formatting). Used by "full" and "section" actions.
+        parent_heading: Scope section lookup to a parent heading's section. Useful when multiple
+            sections share the same sub-heading name (e.g. parent_heading="Server B" to read
+            "Change History" under Server B instead of the first occurrence).
+        occurrence: Which occurrence of the heading to target (1=first, 2=second, etc.).
+            Applies after parent_heading filtering if both are provided.
     """
     a = action.lower()
 
@@ -157,7 +164,10 @@ def gdocs_read(
     elif a == "section":
         if not heading_text:
             return "ERROR: heading_text is required for action='section'"
-        result = docs_service.read_section(document_id, heading_text, as_markdown=(format == "markdown"))
+        result = docs_service.read_section(
+            document_id, heading_text, as_markdown=(format == "markdown"),
+            parent_heading=parent_heading, occurrence=occurrence,
+        )
         if not result:
             return f"ERROR: Section with heading '{heading_text}' not found"
         return result["content"]
@@ -202,6 +212,8 @@ def gdocs_write(
     image_url: str = "",
     width_pt: float | None = None,
     height_pt: float | None = None,
+    parent_heading: str = "",
+    occurrence: int = 1,
 ) -> str:
     """Write, insert, or modify content in a Google Doc. The `action` parameter selects the operation.
 
@@ -225,6 +237,13 @@ def gdocs_write(
     - "add_table" — insert a formatted table (uses: headers, rows, before_heading or after_heading)
     - "insert_image" — insert inline image (uses: image_url, width_pt, height_pt, before_heading)
 
+    SECTION TARGETING (for actions that use heading references):
+    When a document has repeated heading names (e.g. multiple servers each with "CPU", "RAM",
+    "Change History" sub-sections), use parent_heading and/or occurrence to disambiguate:
+    - parent_heading="Server B", heading_text="Change History" targets the Change History under Server B
+    - occurrence=2, heading_text="CPU" targets the second "CPU" heading in the document
+    - Both can be combined: parent_heading + occurrence
+
     Args:
         document_id: The Google Doc ID
         action: Write operation (see above)
@@ -243,6 +262,12 @@ def gdocs_write(
         image_url: Publicly accessible image URL (insert_image action)
         width_pt: Image width in points, 72pt = 1 inch (insert_image action)
         height_pt: Image height in points (insert_image action)
+        parent_heading: Scope heading lookup to a parent heading's section. Useful when multiple
+            sections share the same sub-heading name (e.g. parent_heading="Server B" to target
+            "Change History" under Server B). Applies to: insert_at_section, delete_section,
+            replace (scope="section"), add_heading, add_table, insert_image.
+        occurrence: Which occurrence of the heading to target (1=first, 2=second, etc.).
+            Applies after parent_heading filtering if both are provided.
     """
     a = action.lower()
 
@@ -282,7 +307,10 @@ def gdocs_write(
         if not before_heading and not after_heading:
             return "ERROR: Provide either before_heading or after_heading"
         target = before_heading or after_heading
-        boundaries = docs_service.get_section_boundaries(document_id, target)
+        boundaries = docs_service.get_section_boundaries(
+            document_id, target,
+            parent_heading=parent_heading, occurrence=occurrence,
+        )
         if not boundaries:
             return f"ERROR: Heading '{target}' not found in document"
         if before_heading:
@@ -310,7 +338,10 @@ def gdocs_write(
         range_start = 0
         range_end = float("inf")
         if scope == "section":
-            boundaries = docs_service.get_section_boundaries(document_id, section_heading)
+            boundaries = docs_service.get_section_boundaries(
+                document_id, section_heading,
+                parent_heading=parent_heading, occurrence=occurrence,
+            )
             if not boundaries:
                 return f"ERROR: Heading '{section_heading}' not found in document"
             range_start = boundaries["heading_start"]
@@ -376,7 +407,10 @@ def gdocs_write(
     elif a == "delete_section":
         if not heading_text:
             return "ERROR: heading_text is required for delete_section action"
-        boundaries = docs_service.get_section_boundaries(document_id, heading_text)
+        boundaries = docs_service.get_section_boundaries(
+            document_id, heading_text,
+            parent_heading=parent_heading, occurrence=occurrence,
+        )
         if not boundaries:
             return f"ERROR: Section with heading '{heading_text}' not found"
         start = boundaries["heading_start"]
@@ -395,12 +429,18 @@ def gdocs_write(
         named_style = style_map[level_clamped]
 
         if before_heading:
-            boundaries = docs_service.get_section_boundaries(document_id, before_heading)
+            boundaries = docs_service.get_section_boundaries(
+                document_id, before_heading,
+                parent_heading=parent_heading, occurrence=occurrence,
+            )
             if not boundaries:
                 return f"ERROR: Heading '{before_heading}' not found"
             insert_at = boundaries["heading_start"]
         elif after_heading:
-            boundaries = docs_service.get_section_boundaries(document_id, after_heading)
+            boundaries = docs_service.get_section_boundaries(
+                document_id, after_heading,
+                parent_heading=parent_heading, occurrence=occurrence,
+            )
             if not boundaries:
                 return f"ERROR: Heading '{after_heading}' not found"
             insert_at = _safe_insert_index(document_id, boundaries["content_end"])
@@ -439,12 +479,18 @@ def gdocs_write(
         table_md = "\n".join(md_lines)
 
         if before_heading:
-            boundaries = docs_service.get_section_boundaries(document_id, before_heading)
+            boundaries = docs_service.get_section_boundaries(
+                document_id, before_heading,
+                parent_heading=parent_heading, occurrence=occurrence,
+            )
             if not boundaries:
                 return f"ERROR: Heading '{before_heading}' not found in document"
             start = boundaries["heading_start"]
         elif after_heading:
-            boundaries = docs_service.get_section_boundaries(document_id, after_heading)
+            boundaries = docs_service.get_section_boundaries(
+                document_id, after_heading,
+                parent_heading=parent_heading, occurrence=occurrence,
+            )
             if not boundaries:
                 return f"ERROR: Heading '{after_heading}' not found in document"
             start = _safe_insert_index(document_id, boundaries["content_end"])
@@ -462,7 +508,10 @@ def gdocs_write(
         index = None
         heading = before_heading or after_heading
         if heading:
-            boundaries = docs_service.get_section_boundaries(document_id, heading)
+            boundaries = docs_service.get_section_boundaries(
+                document_id, heading,
+                parent_heading=parent_heading, occurrence=occurrence,
+            )
             if not boundaries:
                 return f"ERROR: Heading '{heading}' not found"
             index = boundaries["heading_start"] if before_heading else _safe_insert_index(document_id, boundaries["content_end"])
