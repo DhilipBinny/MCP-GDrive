@@ -188,28 +188,34 @@ def replace_all_text(document_id: str, find: str, replace: str) -> dict:
     return {"occurrences_replaced": count}
 
 
-def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
-    """Find a section by its heading text.
+def _find_section_in_content(
+    content: list[dict],
+    heading_styles: dict[str, int],
+    heading_text: str,
+    search_start: int = 0,
+    search_end: float = float("inf"),
+    occurrence: int = 1,
+) -> dict | None:
+    """Find a heading in content elements within the given index range.
 
-    Returns dict with: heading_start, heading_end, content_start, content_end, heading_level
-    Or None if heading not found. Supports partial match (e.g. "4.3" matches "4.3 Estimated Cost").
+    Uses three-tier matching (exact > startswith > contains).  When multiple
+    headings match at the same tier, ``occurrence`` selects which one to return
+    (1 = first, 2 = second, etc.).
+
+    Returns dict with: heading_start, heading_end, content_start, content_end,
+    heading_level — or None if no match is found.
     """
-    doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
-    content = body.get("content", [])
-
-    heading_styles = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3,
-                      "HEADING_4": 4, "HEADING_5": 5, "HEADING_6": 6}
-
-    # Find the target heading — priority: exact match > startswith > contains
-    target_elem = None
-    target_level = None
-    target_idx = None
-    startswith_match = None
-    contains_match = None
+    exact_matches: list[tuple] = []
+    startswith_matches: list[tuple] = []
+    contains_matches: list[tuple] = []
 
     for i, elem in enumerate(content):
+        elem_start = elem.get("startIndex", 0)
+        if elem_start < search_start:
+            continue
+        if search_end != float("inf") and elem_start >= search_end:
+            continue
+
         para = elem.get("paragraph")
         if not para:
             continue
@@ -222,23 +228,21 @@ def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
             if tr:
                 text += tr.get("content", "")
         text = text.strip()
+
+        match_info = (elem, heading_styles[style], i)
         if text == heading_text:
-            target_elem = elem
-            target_level = heading_styles[style]
-            target_idx = i
-            break
-        if startswith_match is None and text.startswith(heading_text):
-            startswith_match = (elem, heading_styles[style], i)
-        if contains_match is None and heading_text in text:
-            contains_match = (elem, heading_styles[style], i)
+            exact_matches.append(match_info)
+        elif text.startswith(heading_text):
+            startswith_matches.append(match_info)
+        elif heading_text in text:
+            contains_matches.append(match_info)
 
-    if target_elem is None and startswith_match:
-        target_elem, target_level, target_idx = startswith_match
-    if target_elem is None and contains_match:
-        target_elem, target_level, target_idx = contains_match
-
-    if target_elem is None:
+    # Use highest-priority tier that has matches
+    matches = exact_matches or startswith_matches or contains_matches
+    if not matches or occurrence < 1 or occurrence > len(matches):
         return None
+
+    target_elem, target_level, target_idx = matches[occurrence - 1]
 
     heading_start = target_elem.get("startIndex", 0)
     heading_end = target_elem.get("endIndex", 0)
@@ -255,6 +259,10 @@ def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
             content_end = elem.get("startIndex", content_end)
             break
 
+    # Cap at search boundary when searching within a parent section
+    if search_end != float("inf"):
+        content_end = min(content_end, int(search_end))
+
     return {
         "heading_start": heading_start,
         "heading_end": heading_end,
@@ -262,6 +270,50 @@ def get_section_boundaries(document_id: str, heading_text: str) -> dict | None:
         "content_end": content_end,
         "heading_level": target_level,
     }
+
+
+def get_section_boundaries(
+    document_id: str,
+    heading_text: str,
+    parent_heading: str = "",
+    occurrence: int = 1,
+) -> dict | None:
+    """Find a section by its heading text.
+
+    Returns dict with: heading_start, heading_end, content_start, content_end, heading_level
+    Or None if heading not found. Supports partial match (e.g. "4.3" matches "4.3 Estimated Cost").
+
+    Args:
+        document_id: The Google Doc ID
+        heading_text: Text of the heading to find
+        parent_heading: If provided, only search within this parent heading's section.
+            Useful when multiple sections share the same sub-heading name
+            (e.g. parent_heading="Server B" to target "Change History" under Server B).
+        occurrence: Which occurrence to return (1=first, 2=second, etc.).
+            Applies after parent_heading filtering if both are provided.
+    """
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    content = body.get("content", [])
+
+    heading_styles = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3,
+                      "HEADING_4": 4, "HEADING_5": 5, "HEADING_6": 6}
+
+    # Determine search range — optionally scoped to a parent heading's section
+    search_start = 0
+    search_end = float("inf")
+    if parent_heading:
+        parent_bounds = _find_section_in_content(content, heading_styles, parent_heading)
+        if not parent_bounds:
+            return None
+        search_start = parent_bounds["content_start"]
+        search_end = parent_bounds["content_end"]
+
+    return _find_section_in_content(
+        content, heading_styles, heading_text,
+        search_start=search_start, search_end=search_end, occurrence=occurrence,
+    )
 
 
 def find_tables(document_id: str) -> list[dict]:
@@ -304,9 +356,26 @@ def find_tables(document_id: str) -> list[dict]:
     return tables
 
 
-def read_section(document_id: str, heading_text: str, as_markdown: bool = False) -> dict | None:
-    """Read content from a specific section only."""
-    boundaries = get_section_boundaries(document_id, heading_text)
+def read_section(
+    document_id: str,
+    heading_text: str,
+    as_markdown: bool = False,
+    parent_heading: str = "",
+    occurrence: int = 1,
+) -> dict | None:
+    """Read content from a specific section only.
+
+    Args:
+        document_id: The Google Doc ID
+        heading_text: Text of the heading to read
+        as_markdown: If True, return content as Markdown; otherwise plain text
+        parent_heading: If provided, only search within this parent heading's section
+        occurrence: Which occurrence to return (1=first, 2=second, etc.)
+    """
+    boundaries = get_section_boundaries(
+        document_id, heading_text,
+        parent_heading=parent_heading, occurrence=occurrence,
+    )
     if not boundaries:
         return None
 
