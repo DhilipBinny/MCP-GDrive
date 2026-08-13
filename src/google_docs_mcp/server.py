@@ -231,6 +231,7 @@ def gdocs_write(
     - Use "add_table_row" to insert a row into an existing table
     - Use "delete_table" to remove an entire table by index
     - Use "insert_image" for inline images from public URLs
+    - Use "insert_page_break" to force a page break before a specific heading
 
     ACTIONS:
     - "write_markdown" — replace entire doc with Markdown content (uses: markdown)
@@ -243,6 +244,7 @@ def gdocs_write(
     - "add_table_row" — insert a row into an existing table (uses: table_index, row_index, cells)
     - "delete_table" — remove an entire table (uses: table_index)
     - "insert_image" — insert inline image (uses: image_url, width_pt, height_pt, before_heading)
+    - "insert_page_break" — insert a page break before a heading (uses: before_heading, parent_heading, occurrence)
 
     SECTION TARGETING (for actions that use heading references):
     When a document has repeated heading names (e.g. multiple servers each with "CPU", "RAM",
@@ -264,7 +266,7 @@ def gdocs_write(
         level: Heading level 1-6 (add_heading action, default 2)
         headers: Column header labels (add_table action)
         rows: List of rows, each a list of cell values (add_table action)
-        before_heading: Insert before this heading (insert_at_section, add_heading, add_table)
+        before_heading: Insert before this heading (insert_at_section, add_heading, add_table, insert_page_break)
         after_heading: Insert after this heading's section content (insert_at_section, add_heading, add_table)
         image_url: Publicly accessible image URL (insert_image action)
         width_pt: Image width in points, 72pt = 1 inch (insert_image action)
@@ -536,8 +538,14 @@ def gdocs_write(
         result = docs_service.insert_inline_image(document_id, image_url, index, width_pt, height_pt)
         return f"Inserted image (object: `{result['object_id']}`)"
 
+    elif a == "insert_page_break":
+        if not before_heading:
+            return "ERROR: before_heading is required for insert_page_break action"
+        result = docs_service.insert_page_break(document_id, before_heading, parent_heading=parent_heading, occurrence=occurrence)
+        return f"Inserted page break before '{before_heading}' at index {result['index']}"
+
     else:
-        return f"ERROR: Unknown action '{action}'. Use: write_markdown, append_markdown, insert_at_section, replace, delete_section, add_heading, add_table, add_table_row, delete_table, insert_image"
+        return f"ERROR: Unknown action '{action}'. Use: write_markdown, append_markdown, insert_at_section, replace, delete_section, add_heading, add_table, add_table_row, delete_table, insert_image, insert_page_break"
 
 
 # ═══════════════════════════════════════════════════════════════
