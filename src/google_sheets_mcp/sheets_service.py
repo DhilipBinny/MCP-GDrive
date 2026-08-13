@@ -571,6 +571,133 @@ def add_conditional_format(
     return {"rule_type": rule_type_upper, "range": range_str}
 
 
+def list_conditional_formats(
+    spreadsheet_id: str,
+    sheet_name: str | None = None,
+) -> list[dict]:
+    """List all conditional formatting rules on a sheet."""
+    service = _get_service()
+    spreadsheet = execute_with_retry(
+        service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="sheets(properties,conditionalFormats)",
+        )
+    )
+
+    # Find the target sheet
+    target_sheet = None
+    for s in spreadsheet.get("sheets", []):
+        props = s["properties"]
+        if sheet_name is None or props["title"] == sheet_name:
+            target_sheet = s
+            break
+    if target_sheet is None:
+        available = [s["properties"]["title"] for s in spreadsheet.get("sheets", [])]
+        raise ValueError(f"Sheet '{sheet_name}' not found. Available: {available}")
+
+    rules = target_sheet.get("conditionalFormats", [])
+    result = []
+    for idx, rule in enumerate(rules):
+        parsed: dict = {"index": idx}
+
+        # Parse ranges
+        ranges = rule.get("ranges", [])
+        range_strs = []
+        for r in ranges:
+            start_row = r.get("startRowIndex")
+            end_row = r.get("endRowIndex")
+            start_col = r.get("startColumnIndex")
+            end_col = r.get("endColumnIndex")
+            has_row = start_row is not None
+            has_col = start_col is not None
+            if has_row and has_col and end_row is not None and end_col is not None:
+                range_strs.append(f"{index_to_col(start_col)}{start_row + 1}:{index_to_col(end_col - 1)}{end_row}")
+            elif has_col and end_col is not None and not has_row:
+                if end_col - start_col == 1:
+                    range_strs.append(f"{index_to_col(start_col)}:{index_to_col(start_col)}")
+                else:
+                    range_strs.append(f"{index_to_col(start_col)}:{index_to_col(end_col - 1)}")
+            elif has_row and end_row is not None and not has_col:
+                range_strs.append(f"{start_row + 1}:{end_row}")
+            elif has_row and has_col:
+                range_strs.append(f"{index_to_col(start_col)}{start_row + 1}")
+            else:
+                range_strs.append("(entire sheet)")
+        parsed["ranges"] = range_strs
+
+        # Determine type and extract details
+        if "booleanRule" in rule:
+            parsed["type"] = "boolean"
+            bool_rule = rule["booleanRule"]
+            condition = bool_rule.get("condition", {})
+            parsed["condition_type"] = condition.get("type", "")
+            cond_values = condition.get("values", [])
+            parsed["condition_values"] = [v.get("userEnteredValue", "") for v in cond_values]
+            # Extract formatting
+            fmt = bool_rule.get("format", {})
+            fmt_desc = []
+            if "backgroundColor" in fmt:
+                bg = fmt["backgroundColor"]
+                fmt_desc.append(f"bg=rgb({bg.get('red', 0):.2f},{bg.get('green', 0):.2f},{bg.get('blue', 0):.2f})")
+            if "textFormat" in fmt:
+                tf = fmt["textFormat"]
+                if tf.get("bold"):
+                    fmt_desc.append("bold")
+                if "foregroundColor" in tf:
+                    fg = tf["foregroundColor"]
+                    fmt_desc.append(f"text=rgb({fg.get('red', 0):.2f},{fg.get('green', 0):.2f},{fg.get('blue', 0):.2f})")
+            parsed["formatting"] = ", ".join(fmt_desc) if fmt_desc else "none"
+
+        elif "gradientRule" in rule:
+            parsed["type"] = "gradient"
+            grad = rule["gradientRule"]
+            parsed["condition_type"] = "GRADIENT"
+            parsed["condition_values"] = []
+            points = []
+            for point_key in ("minpoint", "midpoint", "maxpoint"):
+                pt = grad.get(point_key)
+                if pt:
+                    color = pt.get("color", {})
+                    points.append(
+                        f"{point_key}({pt.get('type', '')}={pt.get('value', '')},"
+                        f" rgb({color.get('red', 0):.2f},{color.get('green', 0):.2f},{color.get('blue', 0):.2f}))"
+                    )
+            parsed["formatting"] = "; ".join(points) if points else "none"
+        else:
+            parsed["type"] = "unknown"
+            parsed["condition_type"] = ""
+            parsed["condition_values"] = []
+            parsed["formatting"] = "none"
+
+        result.append(parsed)
+
+    return result
+
+
+def delete_conditional_format(
+    spreadsheet_id: str,
+    sheet_name: str | None = None,
+    rule_index: int = 0,
+) -> dict:
+    """Delete a conditional formatting rule by index."""
+    service = _get_service()
+    sheet_id, resolved_name = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+
+    request = {
+        "deleteConditionalFormatRule": {
+            "sheetId": sheet_id,
+            "index": rule_index,
+        }
+    }
+    execute_with_retry(
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": [request]},
+        )
+    )
+    return {"deleted_index": rule_index, "sheet_name": resolved_name}
+
+
 def set_data_validation(
     spreadsheet_id: str,
     range_str: str,
