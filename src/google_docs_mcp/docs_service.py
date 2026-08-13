@@ -133,6 +133,20 @@ def insert_inline_image(
     return {"object_id": obj_id}
 
 
+def insert_page_break(document_id: str, before_heading: str, parent_heading: str = "", occurrence: int = 1) -> dict:
+    """Insert a page break before a heading.
+
+    Note: Google Docs API does not allow page breaks inside table cells.
+    """
+    boundaries = get_section_boundaries(document_id, before_heading, parent_heading=parent_heading, occurrence=occurrence)
+    if not boundaries:
+        raise RuntimeError(f"Heading '{before_heading}' not found in document")
+    heading_start = boundaries["heading_start"]
+    requests = [{"insertPageBreak": {"location": {"index": heading_start}}}]
+    batch_update(document_id, requests)
+    return {"index": heading_start}
+
+
 def update_document_style(
     document_id: str,
     margin_top: float | None = None,
