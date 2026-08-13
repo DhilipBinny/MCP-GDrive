@@ -241,7 +241,7 @@ def read_format(spreadsheet_id: str, range_str: str) -> list[dict]:
         service.spreadsheets().get(
             spreadsheetId=spreadsheet_id,
             ranges=[range_str],
-            fields="sheets.data.rowData.values(effectiveFormat,userEnteredFormat),sheets.merges",
+            fields="sheets.data(startRow,startColumn,rowData.values(effectiveFormat,userEnteredFormat)),sheets.merges",
             includeGridData=True,
         )
     )
