@@ -10,6 +10,7 @@ from typing import Literal
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from googleapiclient.errors import HttpError
 
 from . import sheets_service
@@ -82,7 +83,7 @@ def _handle_errors(func):
 # TOOL 1: CREATE
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gsheets_create(
     title: str,
@@ -109,7 +110,7 @@ def gsheets_create(
 # TOOL 2: READ (read, info, find)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_handle_errors
 def gsheets_read(
     spreadsheet_id: str,
@@ -206,7 +207,7 @@ def gsheets_read(
 # TOOL 3: WRITE (write, append, clear)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gsheets_write(
     spreadsheet_id: str,
@@ -269,7 +270,7 @@ def gsheets_write(
 #                 conditional_format, data_validation)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gsheets_format(
     spreadsheet_id: str,
@@ -405,7 +406,7 @@ def gsheets_format(
 #                 delete_chart)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gsheets_manage(
     spreadsheet_id: str,
@@ -538,7 +539,7 @@ def gsheets_manage(
 # DRIVE TOOLS (shared)
 # ═══════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_handle_errors
 def gdrive_search(query: str, max_results: int = 20) -> str:
     """Search for files in Google Drive by name or content.
@@ -559,7 +560,7 @@ def gdrive_search(query: str, max_results: int = 20) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 @_handle_errors
 def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> str:
     """List files in a Google Drive folder.
@@ -580,7 +581,7 @@ def gdrive_list_folder(folder_id: str | None = None, max_results: int = 50) -> s
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
 @_handle_errors
 def gdrive_ops(
     action: str,
