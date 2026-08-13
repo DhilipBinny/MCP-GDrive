@@ -17,14 +17,15 @@ from .markdown_parser import markdown_to_requests
 from shared import drive_service
 
 
-def _safe_insert_index(document_id: str, content_end: int) -> int:
+def _safe_insert_index(document_id: str, content_end: int, body: dict | None = None) -> int:
     """Return content_end - 1 unless that points inside a table, in which case return content_end."""
     candidate = content_end - 1
     if candidate < 1:
         return content_end
-    doc = docs_service.read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    if body is None:
+        doc = docs_service.read_document_raw(document_id)
+        tabs = doc.get("tabs", [])
+        body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
     for elem in body.get("content", []):
         table = elem.get("table")
         if not table:
