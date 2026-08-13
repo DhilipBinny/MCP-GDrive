@@ -403,7 +403,8 @@ def gsheets_format(
 # ═══════════════════════════════════════════════════════════════
 # TOOL 5: MANAGE (add_sheet, delete_sheet, rename_sheet,
 #                 duplicate_sheet, freeze, sort, add_chart,
-#                 delete_chart)
+#                 delete_chart, insert_rows, delete_rows,
+#                 insert_columns, delete_columns)
 # ═══════════════════════════════════════════════════════════════
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
@@ -416,6 +417,9 @@ def gsheets_manage(
     new_name: str = "",
     rows: int = 1,
     columns: int = 0,
+    row_index: int = 0,
+    col_index: int = 0,
+    count: int = 1,
     sort_column: str = "",
     ascending: bool = True,
     chart_type: Literal["BAR", "COLUMN", "LINE", "AREA", "SCATTER", "PIE", "DONUT"] = "COLUMN",
@@ -425,13 +429,15 @@ def gsheets_manage(
     anchor_row: int = 0,
     anchor_column: int = 0,
 ) -> str:
-    """Manage spreadsheet structure — tabs, freezing, sorting, and charts.
+    """Manage spreadsheet structure — tabs, freezing, sorting, charts, and row/column operations.
 
     GUIDELINES:
     - Always freeze headers after writing data: action="freeze" with rows=1
     - Duplicate a sheet before making destructive changes as a backup
     - Sort excludes the header row — provide only the data range
     - For charts, include headers in data_range — first column is the X axis
+    - Use insert_rows/insert_columns to add blank rows/columns before a given index
+    - Use delete_rows/delete_columns to remove rows/columns (destructive, cannot be undone)
 
     ACTIONS:
     - "add_sheet" — add a new tab (uses: title)
@@ -443,15 +449,22 @@ def gsheets_manage(
     - "sort" — sort data in a range by column (uses: data_range, sort_column, ascending, sheet_name). Exclude header row from data_range.
     - "add_chart" — insert a chart from data (uses: chart_type, data_range, title, sheet_name, anchor_row, anchor_column)
     - "delete_chart" — remove a chart (uses: chart_id)
+    - "insert_rows" — insert empty rows before row_index (uses: sheet_name, row_index, count)
+    - "delete_rows" — delete rows starting at row_index (uses: sheet_name, row_index, count)
+    - "insert_columns" — insert empty columns before col_index (uses: sheet_name, col_index, count)
+    - "delete_columns" — delete columns starting at col_index (uses: sheet_name, col_index, count)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        action: Operation — "add_sheet", "delete_sheet", "rename_sheet", "duplicate_sheet", "freeze", "auto_resize", "sort", "add_chart", "delete_chart"
+        action: Operation — "add_sheet", "delete_sheet", "rename_sheet", "duplicate_sheet", "freeze", "auto_resize", "sort", "add_chart", "delete_chart", "insert_rows", "delete_rows", "insert_columns", "delete_columns"
         title: Name for new tab (add_sheet) or chart title (add_chart)
         sheet_name: Tab name for sheet operations and chart/sort context
         new_name: New name for rename/duplicate
         rows: Rows to freeze (freeze, default 1)
         columns: Columns to freeze (freeze, default 0)
+        row_index: 0-based row index for insert_rows/delete_rows (default 0)
+        col_index: 0-based column index for insert_columns/delete_columns (default 0)
+        count: Number of rows/columns to insert or delete (default 1, must be >= 1)
         sort_column: Column letter to sort by e.g. "B" (sort)
         ascending: Sort ascending (sort, default true)
         chart_type: BAR, COLUMN, LINE, AREA, SCATTER, PIE, or DONUT (add_chart)
@@ -531,8 +544,40 @@ def gsheets_manage(
         result = sheets_service.delete_chart(spreadsheet_id, chart_id)
         return f"Deleted chart {result['deleted_chart_id']}"
 
+    elif a == "insert_rows":
+        if count < 1:
+            return "ERROR: count must be >= 1."
+        if row_index < 0:
+            return "ERROR: row_index must be >= 0."
+        result = sheets_service.insert_dimension(spreadsheet_id, sheet_name, "ROWS", row_index, count)
+        return f"Inserted {result['count']} row(s) at index {result['index']} on **{result['sheet_name']}**"
+
+    elif a == "delete_rows":
+        if count < 1:
+            return "ERROR: count must be >= 1."
+        if row_index < 0:
+            return "ERROR: row_index must be >= 0."
+        result = sheets_service.delete_dimension(spreadsheet_id, sheet_name, "ROWS", row_index, count)
+        return f"Deleted {result['count']} row(s) at index {result['index']} on **{result['sheet_name']}**"
+
+    elif a == "insert_columns":
+        if count < 1:
+            return "ERROR: count must be >= 1."
+        if col_index < 0:
+            return "ERROR: col_index must be >= 0."
+        result = sheets_service.insert_dimension(spreadsheet_id, sheet_name, "COLUMNS", col_index, count)
+        return f"Inserted {result['count']} column(s) at index {result['index']} on **{result['sheet_name']}**"
+
+    elif a == "delete_columns":
+        if count < 1:
+            return "ERROR: count must be >= 1."
+        if col_index < 0:
+            return "ERROR: col_index must be >= 0."
+        result = sheets_service.delete_dimension(spreadsheet_id, sheet_name, "COLUMNS", col_index, count)
+        return f"Deleted {result['count']} column(s) at index {result['index']} on **{result['sheet_name']}**"
+
     else:
-        return f"ERROR: Unknown action '{action}'. Use: add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, auto_resize, sort, add_chart, delete_chart"
+        return f"ERROR: Unknown action '{action}'. Use: add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, auto_resize, sort, add_chart, delete_chart, insert_rows, delete_rows, insert_columns, delete_columns"
 
 
 # ═══════════════════════════════════════════════════════════════
