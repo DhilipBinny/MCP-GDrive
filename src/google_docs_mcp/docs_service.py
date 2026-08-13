@@ -356,6 +356,235 @@ def find_tables(document_id: str) -> list[dict]:
     return tables
 
 
+def add_table_row(document_id: str, table_index: int, row_index: int, cells: list[str]) -> dict:
+    """Insert a new row into an existing table and optionally fill cells with values.
+
+    Args:
+        table_index: 0-based table index (from structure output)
+        row_index: Position to insert at (0 = before first row, -1 = append at end)
+        cells: List of cell values to fill in the new row
+    """
+    tables = find_tables(document_id)
+    if table_index < 0 or table_index >= len(tables):
+        raise ValueError(f"Document has {len(tables)} table(s), index {table_index} is out of range")
+
+    table = tables[table_index]
+    num_rows = table["rows"]
+    num_cols = table["columns"]
+
+    if row_index == -1:
+        api_row_index = num_rows - 1
+        insert_below = True
+        actual_row = num_rows
+    elif row_index == 0:
+        api_row_index = 0
+        insert_below = False
+        actual_row = 0
+    elif 0 < row_index <= num_rows:
+        api_row_index = row_index - 1
+        insert_below = True
+        actual_row = row_index
+    else:
+        raise ValueError(
+            f"row_index {row_index} is out of range. "
+            f"Use 0-{num_rows} or -1 to append"
+        )
+
+    requests = [{
+        "insertTableRow": {
+            "tableCellLocation": {
+                "tableStartLocation": {"index": table["start_index"]},
+                "rowIndex": api_row_index,
+                "columnIndex": 0,
+            },
+            "insertBelow": insert_below,
+        }
+    }]
+    batch_update(document_id, requests, preserve_order=True)
+
+    cells_filled = 0
+    if cells:
+        tables = find_tables(document_id)
+        table = tables[table_index]
+
+        fill_requests = []
+        for i, cell_value in enumerate(cells[:num_cols]):
+            if not cell_value:
+                continue
+            cell_data = table["data"][actual_row][i]
+            cell_start = cell_data["start"]
+            fill_requests.append({
+                "insertText": {
+                    "location": {"index": cell_start},
+                    "text": cell_value,
+                }
+            })
+            cells_filled += 1
+
+        if fill_requests:
+            batch_update(document_id, fill_requests)
+
+    return {"table_index": table_index, "actual_row": actual_row, "cells_filled": cells_filled}
+
+
+def delete_table(document_id: str, table_index: int) -> dict:
+    """Delete an entire table by its 0-based index."""
+    tables = find_tables(document_id)
+    if table_index < 0 or table_index >= len(tables):
+        raise ValueError(f"Document has {len(tables)} table(s), index {table_index} is out of range")
+
+    table = tables[table_index]
+    requests = [{
+        "deleteContentRange": {
+            "range": {
+                "startIndex": table["start_index"],
+                "endIndex": table["end_index"],
+            }
+        }
+    }]
+    batch_update(document_id, requests)
+    return {"table_index": table_index, "deleted": True}
+
+
+def style_table(
+    document_id: str,
+    table_index: int,
+    header_bold: bool = False,
+    header_bg_color: str | None = None,
+    alt_row_color: str | None = None,
+    border_color: str | None = None,
+    border_width_pt: float | None = None,
+    column_widths: list[int] | None = None,
+) -> dict:
+    """Style a table with header formatting, borders, alternating row colors, and column widths."""
+    from shared.utils import hex_to_rgb
+
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+
+    table_count = 0
+    target_table = None
+    target_elem = None
+    for elem in body.get("content", []):
+        if elem.get("table"):
+            if table_count == table_index:
+                target_table = elem["table"]
+                target_elem = elem
+                break
+            table_count += 1
+
+    if target_table is None:
+        total = sum(1 for e in body.get("content", []) if e.get("table"))
+        raise ValueError(f"Document has {total} table(s), index {table_index} is out of range")
+
+    table_start = target_elem.get("startIndex", 0)
+    num_rows = target_table.get("rows", 0)
+    num_cols = target_table.get("columns", 0)
+    table_rows = target_table.get("tableRows", [])
+
+    requests = []
+
+    if header_bold and table_rows:
+        header_row = table_rows[0]
+        for cell in header_row.get("tableCells", []):
+            for ce in cell.get("content", []):
+                para = ce.get("paragraph")
+                if not para:
+                    continue
+                for pe in para.get("elements", []):
+                    start = pe.get("startIndex", 0)
+                    end = pe.get("endIndex", 0)
+                    if end > start:
+                        requests.append({
+                            "updateTextStyle": {
+                                "textStyle": {"bold": True},
+                                "range": {"startIndex": start, "endIndex": end},
+                                "fields": "bold",
+                            }
+                        })
+
+    if header_bg_color:
+        rgb = hex_to_rgb(header_bg_color)
+        requests.append({
+            "updateTableCellStyle": {
+                "tableCellStyle": {"backgroundColor": {"color": {"rgbColor": rgb}}},
+                "tableRange": {
+                    "tableCellLocation": {"tableStartLocation": {"index": table_start}, "rowIndex": 0, "columnIndex": 0},
+                    "rowSpan": 1, "columnSpan": num_cols,
+                },
+                "fields": "backgroundColor",
+            }
+        })
+
+    if alt_row_color:
+        rgb = hex_to_rgb(alt_row_color)
+        for r_idx in range(1, num_rows):
+            if r_idx % 2 == 1:
+                requests.append({
+                    "updateTableCellStyle": {
+                        "tableCellStyle": {"backgroundColor": {"color": {"rgbColor": rgb}}},
+                        "tableRange": {
+                            "tableCellLocation": {"tableStartLocation": {"index": table_start}, "rowIndex": r_idx, "columnIndex": 0},
+                            "rowSpan": 1, "columnSpan": num_cols,
+                        },
+                        "fields": "backgroundColor",
+                    }
+                })
+
+    if border_color is not None or border_width_pt is not None:
+        border_rgb = hex_to_rgb(border_color) if border_color else {"red": 0, "green": 0, "blue": 0}
+        width = border_width_pt if border_width_pt is not None else 0.5
+        border_style = {"width": {"magnitude": width, "unit": "PT"}, "color": {"color": {"rgbColor": border_rgb}}, "dashStyle": "SOLID"}
+        requests.append({
+            "updateTableCellStyle": {
+                "tableCellStyle": {"borderTop": border_style, "borderBottom": border_style, "borderLeft": border_style, "borderRight": border_style},
+                "tableRange": {
+                    "tableCellLocation": {"tableStartLocation": {"index": table_start}, "rowIndex": 0, "columnIndex": 0},
+                    "rowSpan": num_rows, "columnSpan": num_cols,
+                },
+                "fields": "borderTop,borderBottom,borderLeft,borderRight",
+            }
+        })
+
+    if column_widths:
+        if any(w <= 0 for w in column_widths):
+            raise ValueError("All column_widths values must be positive")
+        tab_style = {}
+        if tabs:
+            tab_style = tabs[0].get("documentTab", {}).get("documentStyle", {})
+        doc_style = tab_style or doc.get("documentStyle", {})
+        page_width = doc_style.get("pageSize", {}).get("width", {}).get("magnitude", 612)
+        margin_left = doc_style.get("marginLeft", {}).get("magnitude", 72)
+        margin_right = doc_style.get("marginRight", {}).get("magnitude", 72)
+        usable_width = page_width - margin_left - margin_right
+        total_pct = sum(column_widths[:num_cols])
+        for col_idx, pct in enumerate(column_widths[:num_cols]):
+            col_width = (pct / total_pct) * usable_width
+            requests.append({
+                "updateTableColumnProperties": {
+                    "tableStartLocation": {"index": table_start},
+                    "columnIndices": [col_idx],
+                    "tableColumnProperties": {"widthType": "FIXED_WIDTH", "width": {"magnitude": col_width, "unit": "PT"}},
+                    "fields": "widthType,width",
+                }
+            })
+
+    if not requests:
+        return {"styled": False, "applied": []}
+
+    batch_update(document_id, requests, preserve_order=True)
+
+    applied = []
+    if header_bold: applied.append("header bold")
+    if header_bg_color: applied.append("header background")
+    if alt_row_color: applied.append("alternating rows")
+    if border_color is not None or border_width_pt is not None: applied.append("borders")
+    if column_widths: applied.append("column widths")
+
+    return {"styled": True, "applied": applied}
+
+
 def read_section(
     document_id: str,
     heading_text: str,
@@ -363,15 +592,7 @@ def read_section(
     parent_heading: str = "",
     occurrence: int = 1,
 ) -> dict | None:
-    """Read content from a specific section only.
-
-    Args:
-        document_id: The Google Doc ID
-        heading_text: Text of the heading to read
-        as_markdown: If True, return content as Markdown; otherwise plain text
-        parent_heading: If provided, only search within this parent heading's section
-        occurrence: Which occurrence to return (1=first, 2=second, etc.)
-    """
+    """Read content from a specific section only."""
     boundaries = get_section_boundaries(
         document_id, heading_text,
         parent_heading=parent_heading, occurrence=occurrence,
