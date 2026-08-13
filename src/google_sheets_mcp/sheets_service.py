@@ -91,7 +91,19 @@ def write_range(
     range_str: str,
     values: list[list],
     value_input_option: str = "USER_ENTERED",
+    date_format: str | None = None,
 ) -> dict:
+    """Write values to a range, optionally applying a date number format.
+
+    Args:
+        spreadsheet_id: The spreadsheet ID.
+        range_str: A1 notation range (e.g. "Sheet1!A2:A5").
+        values: 2D array of values to write.
+        value_input_option: "USER_ENTERED" or "RAW".
+        date_format: Optional date format pattern (e.g. "yyyy-MM-dd").
+            When provided, a number format of type DATE with this pattern
+            is applied to the written range after writing values.
+    """
     service = _get_service()
     values = parse_values(values)
     result = execute_with_retry(
@@ -102,6 +114,34 @@ def write_range(
             body={"values": values},
         )
     )
+
+    if date_format:
+        sheet_name = None
+        if "!" in range_str:
+            sheet_name = range_str.split("!")[0].strip("'")
+        sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
+        grid_range = parse_a1_range(range_str, sheet_id)
+
+        execute_with_retry(
+            service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"requests": [{
+                    "repeatCell": {
+                        "range": grid_range,
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {
+                                    "type": "DATE",
+                                    "pattern": date_format,
+                                }
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }]},
+            )
+        )
+
     return {
         "updated_range": result.get("updatedRange", ""),
         "updated_rows": result.get("updatedRows", 0),
