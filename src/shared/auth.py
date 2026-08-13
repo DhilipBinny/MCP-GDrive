@@ -12,6 +12,7 @@ Supports two modes:
 """
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -28,6 +29,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/presentations",
 ]
+
+logger = logging.getLogger(__name__)
 
 APP_NAME = "google-workspace-mcp"
 KEYRING_SERVICE = "google-workspace-mcp"
@@ -78,6 +81,7 @@ def _keyring_available() -> bool:
                 return False
         return True
     except Exception:
+        logger.debug("Keyring availability check failed", exc_info=True)
         return False
 
 
@@ -90,6 +94,7 @@ def _save_token_to_keyring(creds: Credentials) -> bool:
         keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, creds.to_json())
         return True
     except Exception:
+        logger.debug("Failed to save token to keyring", exc_info=True)
         return False
 
 
@@ -103,7 +108,7 @@ def _load_token_from_keyring() -> Credentials | None:
         if token_json:
             return Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
     except Exception:
-        pass
+        logger.debug("Failed to load token from keyring", exc_info=True)
     return None
 
 
@@ -247,6 +252,7 @@ def run_auth_flow() -> None:
         keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
         location = "OS keyring (secure)"
     except Exception:
+        logger.debug("Keyring check after auth flow failed", exc_info=True)
         location = str(TOKEN_PATH)
 
     print(f"\nAuthenticated successfully!", file=sys.stderr)

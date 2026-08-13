@@ -1,13 +1,15 @@
 """Shared utilities — retry logic, color parsing, A1 notation, index math."""
 
 import json
+import logging
 import re
 import random
 import time
-import sys
 from typing import Any
 
 from googleapiclient.errors import HttpError
+
+logger = logging.getLogger(__name__)
 
 
 def utf16_len(text: str) -> int:
@@ -36,9 +38,9 @@ def execute_with_retry(request, max_retries: int = 5) -> Any:
         try:
             return request.execute()
         except HttpError as e:
-            if e.resp.status in (429, 500, 503) and attempt < max_retries:
+            if e.resp.status in (429, 500, 502, 503) and attempt < max_retries:
                 wait = min(((2 ** attempt) + random.random()), 64)
-                print(f"API error {e.resp.status}, retrying in {wait:.1f}s...", file=sys.stderr)
+                logger.debug("API error %s, retrying in %.1fs...", e.resp.status, wait)
                 time.sleep(wait)
             else:
                 raise

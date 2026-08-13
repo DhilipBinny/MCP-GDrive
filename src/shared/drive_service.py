@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import mimetypes
+import re
 from pathlib import Path
 
 from googleapiclient.discovery import build
@@ -13,13 +14,15 @@ from .auth import get_credentials
 from .utils import execute_with_retry
 
 _service = None
+_service_creds = None
 
 
 def _get_service():
-    global _service
-    if _service is None:
-        creds = get_credentials()
+    global _service, _service_creds
+    creds = get_credentials()
+    if _service is None or creds is not _service_creds:
         _service = build("drive", "v3", credentials=creds)
+        _service_creds = creds
     return _service
 
 
@@ -37,24 +40,36 @@ def search_files(
     q_parts.append("trashed=false")
     q = " and ".join(q_parts)
 
-    results = execute_with_retry(
-        service.files().list(
-            q=q,
-            pageSize=max_results,
-            fields="files(id,name,mimeType,modifiedTime,webViewLink)",
-            orderBy="modifiedTime desc",
+    max_results = min(max_results, 1000)
+    all_files: list[dict] = []
+    page_token = None
+    prev_count = -1
+    while len(all_files) < max_results:
+        if len(all_files) == prev_count:
+            break
+        prev_count = len(all_files)
+        page_size = min(max_results - len(all_files), 100)
+        results = execute_with_retry(
+            service.files().list(
+                q=q,
+                pageSize=page_size,
+                pageToken=page_token,
+                fields="nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink)",
+                orderBy="modifiedTime desc",
+            )
         )
-    )
-    return [
-        {
-            "id": f["id"],
-            "name": f["name"],
-            "mime_type": f["mimeType"],
-            "modified": f.get("modifiedTime", ""),
-            "url": f.get("webViewLink", ""),
-        }
-        for f in results.get("files", [])
-    ]
+        for f in results.get("files", []):
+            all_files.append({
+                "id": f["id"],
+                "name": f["name"],
+                "mime_type": f["mimeType"],
+                "modified": f.get("modifiedTime", ""),
+                "url": f.get("webViewLink", ""),
+            })
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return all_files[:max_results]
 
 
 def list_folder(
@@ -69,24 +84,36 @@ def list_folder(
         q_parts.append("'root' in parents")
     q = " and ".join(q_parts)
 
-    results = execute_with_retry(
-        service.files().list(
-            q=q,
-            pageSize=max_results,
-            fields="files(id,name,mimeType,modifiedTime,webViewLink)",
-            orderBy="name",
+    max_results = min(max_results, 1000)
+    all_files: list[dict] = []
+    page_token = None
+    prev_count = -1
+    while len(all_files) < max_results:
+        if len(all_files) == prev_count:
+            break
+        prev_count = len(all_files)
+        page_size = min(max_results - len(all_files), 100)
+        results = execute_with_retry(
+            service.files().list(
+                q=q,
+                pageSize=page_size,
+                pageToken=page_token,
+                fields="nextPageToken,files(id,name,mimeType,modifiedTime,webViewLink)",
+                orderBy="name",
+            )
         )
-    )
-    return [
-        {
-            "id": f["id"],
-            "name": f["name"],
-            "mime_type": f["mimeType"],
-            "modified": f.get("modifiedTime", ""),
-            "url": f.get("webViewLink", ""),
-        }
-        for f in results.get("files", [])
-    ]
+        for f in results.get("files", []):
+            all_files.append({
+                "id": f["id"],
+                "name": f["name"],
+                "mime_type": f["mimeType"],
+                "modified": f.get("modifiedTime", ""),
+                "url": f.get("webViewLink", ""),
+            })
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return all_files[:max_results]
 
 
 def move_file(file_id: str, folder_id: str) -> dict:
@@ -264,7 +291,7 @@ def export_file(file_id: str, format: str, output_path: str | None = None) -> di
 
     if not output_path:
         file_info = execute_with_retry(service.files().get(fileId=file_id, fields="name"))
-        stem = Path(file_info["name"]).stem
+        stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', Path(file_info["name"]).stem)
         output_path = f"{stem}.{format.lower()}"
 
     buffer.seek(0)
