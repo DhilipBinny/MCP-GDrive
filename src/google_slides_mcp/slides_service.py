@@ -627,7 +627,7 @@ def _summarize_slide(slide: dict) -> dict:
                     text = _extract_text(cell.get("text", {}).get("textElements", []))
                     cells.append(text)
                 rows_data.append(cells)
-            elements.append({"type": "table", "rows": table.get("rows", 0), "columns": table.get("columns", 0), "data": rows_data})
+            elements.append({"type": "table", "rows": table.get("rows", 0), "columns": table.get("columns", 0), "data": rows_data, "object_id": elem["objectId"]})
         elif image:
             elements.append({"type": "image", "url": image.get("contentUrl", ""), "object_id": elem["objectId"]})
         elif shape:
