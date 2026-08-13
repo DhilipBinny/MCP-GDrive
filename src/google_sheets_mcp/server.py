@@ -122,13 +122,14 @@ def gsheets_read(
     sheet_name: str | None = None,
     match_case: bool = False,
 ) -> str:
-    """Read data from a spreadsheet — cell values, metadata, search, or formatting.
+    """Read data from a spreadsheet — cell values, metadata, search, formatting, or conditional format rules.
 
     GUIDELINES:
     - Start with action="info" to understand the spreadsheet structure (tabs, sizes, charts)
     - Use action="read" with a specific range for efficiency — avoid reading entire sheets
     - Use action="find" to locate specific values before editing
     - Use action="read_format" to inspect cell formatting (colors, fonts, borders, merges)
+    - Use action="list_conditional_formats" to see existing conditional formatting rules before adding/deleting
     - render="formula" reveals formulas; render="raw" gives unformatted numbers
 
     ACTIONS:
@@ -136,14 +137,15 @@ def gsheets_read(
     - "info" — get spreadsheet metadata: title, tabs, row/column counts (no extra params)
     - "find" — search for text across cells (uses: query, sheet_name, match_case)
     - "read_format" — inspect cell formatting: colors, fonts, alignment, borders, merges (uses: range)
+    - "list_conditional_formats" — list all conditional formatting rules on a sheet (uses: sheet_name)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        action: Operation — "read", "info", "find", or "read_format"
+        action: Operation — "read", "info", "find", "read_format", or "list_conditional_formats"
         range: A1 notation range for read/read_format (e.g. "A1:D10", "Sheet1!A1:D10", "A:A")
         render: Value rendering for read — "formatted" ($1,234.56), "raw" (1234.56), or "formula" (=SUM(A1:A5))
         query: Text to search for (find action)
-        sheet_name: Limit search to a specific tab (find action)
+        sheet_name: Tab name — required for list_conditional_formats, optional filter for find
         match_case: Case-sensitive search (find action, default false)
     """
     a = action.lower()
@@ -243,8 +245,24 @@ def gsheets_read(
             lines.append(f"- `{c['cell']}`: {', '.join(parts)}")
         return "\n".join(lines)
 
+    elif a == "list_conditional_formats":
+        rules = sheets_service.list_conditional_formats(spreadsheet_id, sheet_name)
+        if not rules:
+            tab = sheet_name or "(first tab)"
+            return f"No conditional formatting rules on **{tab}**."
+        lines = [f"Found {len(rules)} conditional formatting rule(s):\n"]
+        for r in rules:
+            ranges_str = ", ".join(r["ranges"])
+            vals = ", ".join(r["condition_values"]) if r["condition_values"] else ""
+            vals_part = f" [{vals}]" if vals else ""
+            lines.append(
+                f"- **Rule {r['index']}** ({r['type']}): {r['condition_type']}{vals_part}"
+                f"\n  Range: `{ranges_str}` | Format: {r['formatting']}"
+            )
+        return "\n".join(lines)
+
     else:
-        return f"ERROR: Unknown action '{action}'. Use: read, info, find, read_format"
+        return f"ERROR: Unknown action '{action}'. Use: read, info, find, read_format, list_conditional_formats"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -351,8 +369,10 @@ def gsheets_format(
     custom_formula: str | None = None,
     strict: bool = True,
     input_message: str | None = None,
+    rule_index: int = 0,
+    sheet_name: str | None = None,
 ) -> str:
-    """Format cells — styling, borders, merging, conditional formatting, and data validation.
+    """Format cells — styling, borders, merging, conditional formatting, deletion, and data validation.
 
     GUIDELINES:
     - Bold + background_color on header rows for readability
@@ -367,11 +387,12 @@ def gsheets_format(
     - "merge" — merge cells (uses: range, merge_type). Types: MERGE_ALL, MERGE_COLUMNS, MERGE_ROWS
     - "unmerge" — unmerge cells (uses: range)
     - "conditional_format" — conditional formatting (uses: range, rule_type, values, bg_color, text_color, bold, custom_formula). Rule types: NUMBER_GREATER, NUMBER_LESS, NUMBER_BETWEEN, TEXT_CONTAINS, TEXT_NOT_CONTAINS, BLANK, NOT_BLANK, CUSTOM_FORMULA
+    - "delete_conditional_format" — delete a conditional formatting rule by index (uses: sheet_name, rule_index). Use gsheets_read(action="list_conditional_formats") first to find the rule index.
     - "data_validation" — set validation rules (uses: range, rule_type, values, strict, input_message). Rule types: ONE_OF_LIST, NUMBER_BETWEEN, TEXT_IS_EMAIL, DATE_AFTER
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        action: Operation — "style", "borders", "merge", "unmerge", "conditional_format", "data_validation"
+        action: Operation — "style", "borders", "merge", "unmerge", "conditional_format", "delete_conditional_format", "data_validation"
         range: A1 notation range to format
         bold: Set bold (style/conditional_format)
         italic: Set italic (style)
@@ -395,6 +416,8 @@ def gsheets_format(
         custom_formula: Formula for CUSTOM_FORMULA rule e.g. "=$D2<TODAY()" (conditional_format)
         strict: Reject invalid input (data_validation, default true)
         input_message: Tooltip shown to user (data_validation)
+        rule_index: 0-based index of the conditional format rule to delete (delete_conditional_format, default 0)
+        sheet_name: Tab name for delete_conditional_format (defaults to first tab)
     """
     a = action.lower()
 
@@ -439,6 +462,14 @@ def gsheets_format(
         )
         return f"Added {result['rule_type']} conditional format on `{result['range']}`"
 
+    elif a == "delete_conditional_format":
+        if rule_index < 0:
+            return "ERROR: rule_index must be >= 0."
+        result = sheets_service.delete_conditional_format(
+            spreadsheet_id, sheet_name, rule_index,
+        )
+        return f"Deleted conditional format rule {result['deleted_index']} on **{result['sheet_name']}**"
+
     elif a == "data_validation":
         if not cell_range:
             return "ERROR: range is required for data_validation action."
@@ -450,7 +481,7 @@ def gsheets_format(
         return f"Set {result['rule_type']} validation on `{result['range']}`"
 
     else:
-        return f"ERROR: Unknown action '{action}'. Use: style, borders, merge, unmerge, conditional_format, data_validation"
+        return f"ERROR: Unknown action '{action}'. Use: style, borders, merge, unmerge, conditional_format, delete_conditional_format, data_validation"
 
 
 # ═══════════════════════════════════════════════════════════════
