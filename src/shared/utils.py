@@ -75,6 +75,14 @@ def hex_to_rgb(hex_color: str) -> dict:
     return {"red": r / 255.0, "green": g / 255.0, "blue": b / 255.0}
 
 
+def rgb_to_hex(color: dict) -> str:
+    """Convert Google API color {red, green, blue} (0-1 floats) to '#RRGGBB' hex string."""
+    r = int(round(color.get("red", 0) * 255))
+    g = int(round(color.get("green", 0) * 255))
+    b = int(round(color.get("blue", 0) * 255))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 NARROW_CHARS = set("iIlj1|!.,;:'`() ")
 WIDE_CHARS = set("MWmw@%&ÆŒØQ")
 

@@ -6,7 +6,7 @@ from googleapiclient.discovery import build
 
 from shared.auth import get_credentials
 from shared.utils import (
-    execute_with_retry, hex_to_rgb, parse_a1_range,
+    execute_with_retry, hex_to_rgb, rgb_to_hex, parse_a1_range,
     parse_values, resolve_sheet_id, quote_sheet_name, index_to_col,
 )
 
@@ -186,6 +186,157 @@ def find_in_sheet(
                         "value": cell_str,
                     })
     return matches
+
+
+def read_format(spreadsheet_id: str, range_str: str) -> list[dict]:
+    """Read cell formatting for a range.
+
+    Returns a list of dicts, one per cell with non-default formatting, containing
+    row/col position and formatting properties (background color, font, alignment,
+    number format, borders, merge state).
+    """
+    service = _get_service()
+
+    result = execute_with_retry(
+        service.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            ranges=[range_str],
+            fields="sheets.data.rowData.values(effectiveFormat,userEnteredFormat),sheets.merges",
+            includeGridData=True,
+        )
+    )
+
+    sheets = result.get("sheets", [])
+    if not sheets:
+        return []
+
+    sheet = sheets[0]
+    data_list = sheet.get("data", [])
+    if not data_list:
+        return []
+
+    data = data_list[0]
+    row_data = data.get("rowData", [])
+    start_row = data.get("startRow", 0)
+    start_col = data.get("startColumn", 0)
+
+    # Collect merges that overlap the requested range
+    merges = sheet.get("merges", [])
+
+    def _is_merged(row_idx: int, col_idx: int) -> dict | None:
+        """Check if a cell is part of a merge. Returns merge info or None."""
+        for m in merges:
+            if (m["startRowIndex"] <= row_idx < m["endRowIndex"]
+                    and m["startColumnIndex"] <= col_idx < m["endColumnIndex"]):
+                return {
+                    "range": (
+                        f"{index_to_col(m['startColumnIndex'])}{m['startRowIndex'] + 1}"
+                        f":{index_to_col(m['endColumnIndex'] - 1)}{m['endRowIndex']}"
+                    ),
+                }
+        return None
+
+    def _extract_border(border: dict) -> dict | None:
+        """Extract border info from a border dict."""
+        if not border:
+            return None
+        style = border.get("style")
+        if not style or style == "NONE":
+            return None
+        info: dict = {"style": style}
+        color = border.get("color") or border.get("colorStyle", {}).get("rgbColor")
+        if color:
+            info["color"] = rgb_to_hex(color)
+        return info
+
+    # Defaults to detect non-default formatting
+    _DEFAULT_BG = "#ffffff"
+    _DEFAULT_FONT_SIZE = 10
+    _DEFAULT_FONT_FAMILY = "Arial"
+    _DEFAULT_H_ALIGN = "LEFT"
+    _DEFAULT_V_ALIGN = "BOTTOM"
+
+    cells = []
+    for r_offset, row in enumerate(row_data):
+        values = row.get("values", [])
+        for c_offset, cell in enumerate(values):
+            fmt = cell.get("effectiveFormat") or cell.get("userEnteredFormat")
+            if not fmt:
+                continue
+
+            row_idx = start_row + r_offset
+            col_idx = start_col + c_offset
+            cell_ref = f"{index_to_col(col_idx)}{row_idx + 1}"
+
+            props: dict = {}
+
+            # Background color
+            bg_style = fmt.get("backgroundColorStyle", {}).get("rgbColor")
+            bg_color = fmt.get("backgroundColor")
+            bg = bg_style or bg_color
+            if bg:
+                hex_bg = rgb_to_hex(bg)
+                if hex_bg != _DEFAULT_BG:
+                    props["bg"] = hex_bg
+
+            # Text format
+            tf = fmt.get("textFormat", {})
+            if tf.get("bold"):
+                props["bold"] = True
+            if tf.get("italic"):
+                props["italic"] = True
+            font_size = tf.get("fontSize")
+            if font_size and font_size != _DEFAULT_FONT_SIZE:
+                props["font_size"] = font_size
+            font_family = tf.get("fontFamily")
+            if font_family and font_family != _DEFAULT_FONT_FAMILY:
+                props["font_family"] = font_family
+            fg_style = tf.get("foregroundColorStyle", {}).get("rgbColor")
+            fg_color = tf.get("foregroundColor")
+            fg = fg_style or fg_color
+            if fg:
+                hex_fg = rgb_to_hex(fg)
+                if hex_fg != "#000000":
+                    props["fg"] = hex_fg
+
+            # Alignment
+            h_align = fmt.get("horizontalAlignment")
+            if h_align and h_align != _DEFAULT_H_ALIGN:
+                props["align"] = h_align
+            v_align = fmt.get("verticalAlignment")
+            if v_align and v_align != _DEFAULT_V_ALIGN:
+                props["valign"] = v_align
+
+            # Number format
+            nf = fmt.get("numberFormat")
+            if nf:
+                nf_type = nf.get("type", "")
+                nf_pattern = nf.get("pattern", "")
+                if nf_type and nf_type not in ("NONE", "TEXT"):
+                    props["number_format"] = nf_type
+                    if nf_pattern:
+                        props["number_pattern"] = nf_pattern
+
+            # Borders
+            borders = fmt.get("borders", {})
+            border_props = {}
+            for edge in ("top", "bottom", "left", "right"):
+                b = _extract_border(borders.get(edge))
+                if b:
+                    border_props[edge] = b
+            if border_props:
+                props["borders"] = border_props
+
+            # Merge state
+            merge = _is_merged(row_idx, col_idx)
+            if merge:
+                props["merged"] = merge["range"]
+
+            # Only include cells with non-default formatting
+            if props:
+                cells.append({"cell": cell_ref, "row": row_idx, "col": col_idx, **props})
+
+    return cells
 
 
 def format_cells(

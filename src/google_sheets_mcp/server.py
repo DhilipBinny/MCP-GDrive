@@ -32,7 +32,8 @@ WORKFLOW FOR EDITING EXISTING SHEETS:
 1. gsheets_read(action="info") — see tabs, row counts, chart IDs
 2. gsheets_read(action="read") — read the data as markdown table
 3. gsheets_read(action="find") — locate specific cells
-4. gsheets_write/gsheets_format — make changes
+4. gsheets_read(action="read_format") — inspect cell formatting (colors, fonts, borders)
+5. gsheets_write/gsheets_format — make changes
 
 DATA FORMATTING BEST PRACTICES:
 - Always freeze row 1 (headers) after writing data.
@@ -121,23 +122,25 @@ def gsheets_read(
     sheet_name: str | None = None,
     match_case: bool = False,
 ) -> str:
-    """Read data from a spreadsheet — cell values, metadata, or search.
+    """Read data from a spreadsheet — cell values, metadata, search, or formatting.
 
     GUIDELINES:
     - Start with action="info" to understand the spreadsheet structure (tabs, sizes, charts)
     - Use action="read" with a specific range for efficiency — avoid reading entire sheets
     - Use action="find" to locate specific values before editing
+    - Use action="read_format" to inspect cell formatting (colors, fonts, borders, merges)
     - render="formula" reveals formulas; render="raw" gives unformatted numbers
 
     ACTIONS:
     - "read" — read cell values as a markdown table (uses: range, render)
     - "info" — get spreadsheet metadata: title, tabs, row/column counts (no extra params)
     - "find" — search for text across cells (uses: query, sheet_name, match_case)
+    - "read_format" — inspect cell formatting: colors, fonts, alignment, borders, merges (uses: range)
 
     Args:
         spreadsheet_id: The spreadsheet ID
-        action: Operation — "read", "info", or "find"
-        range: A1 notation range for read (e.g. "A1:D10", "Sheet1!A1:D10", "A:A")
+        action: Operation — "read", "info", "find", or "read_format"
+        range: A1 notation range for read/read_format (e.g. "A1:D10", "Sheet1!A1:D10", "A:A")
         render: Value rendering for read — "formatted" ($1,234.56), "raw" (1234.56), or "formula" (=SUM(A1:A5))
         query: Text to search for (find action)
         sheet_name: Limit search to a specific tab (find action)
@@ -199,8 +202,49 @@ def gsheets_read(
             lines.append(f"\n... and {len(matches) - 50} more")
         return "\n".join(lines)
 
+    elif a == "read_format":
+        cells = sheets_service.read_format(spreadsheet_id, cell_range)
+        if not cells:
+            return f"No non-default formatting found in `{cell_range}`."
+        lines = [f"Formatting for `{cell_range}` ({len(cells)} cell(s) with non-default formatting):\n"]
+        for c in cells:
+            parts = []
+            if c.get("bold"):
+                parts.append("bold")
+            if c.get("italic"):
+                parts.append("italic")
+            if c.get("bg"):
+                parts.append(f"bg={c['bg']}")
+            if c.get("fg"):
+                parts.append(f"fg={c['fg']}")
+            if c.get("font_size"):
+                parts.append(f"font_size={c['font_size']}")
+            if c.get("font_family"):
+                parts.append(f"font_family={c['font_family']}")
+            if c.get("align"):
+                parts.append(f"align={c['align']}")
+            if c.get("valign"):
+                parts.append(f"valign={c['valign']}")
+            if c.get("number_format"):
+                nf = c["number_format"]
+                if c.get("number_pattern"):
+                    nf += f" ({c['number_pattern']})"
+                parts.append(f"number_format={nf}")
+            if c.get("borders"):
+                border_parts = []
+                for edge, b in c["borders"].items():
+                    info = b["style"]
+                    if b.get("color") and b["color"] != "#000000":
+                        info += f" {b['color']}"
+                    border_parts.append(f"{edge}={info}")
+                parts.append(f"borders=[{', '.join(border_parts)}]")
+            if c.get("merged"):
+                parts.append(f"merged={c['merged']}")
+            lines.append(f"- `{c['cell']}`: {', '.join(parts)}")
+        return "\n".join(lines)
+
     else:
-        return f"ERROR: Unknown action '{action}'. Use: read, info, find"
+        return f"ERROR: Unknown action '{action}'. Use: read, info, find, read_format"
 
 
 # ═══════════════════════════════════════════════════════════════
