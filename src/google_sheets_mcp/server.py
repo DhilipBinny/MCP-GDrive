@@ -419,7 +419,7 @@ def gsheets_manage(
     ascending: bool = True,
     chart_type: Literal["BAR", "COLUMN", "LINE", "AREA", "SCATTER", "PIE", "DONUT"] = "COLUMN",
     data_range: str = "",
-    chart_id: int = 0,
+    chart_id: int | None = None,
     auto_resize: bool = True,
     anchor_row: int = 0,
     anchor_column: int = 0,
@@ -525,7 +525,7 @@ def gsheets_manage(
         return f"Added {result['chart_type']} chart (ID: {result['chart_id']})"
 
     elif a == "delete_chart":
-        if not chart_id:
+        if chart_id is None:
             return "ERROR: chart_id is required for delete_chart action."
         result = sheets_service.delete_chart(spreadsheet_id, chart_id)
         return f"Deleted chart {result['deleted_chart_id']}"
