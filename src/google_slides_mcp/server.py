@@ -443,6 +443,8 @@ def gslides_manage(
     placeholder_text: str = "",
     name: str = "",
     folder_id: str = "",
+    video_id: str = "",
+    source: str = "YOUTUBE",
 ) -> str:
     """Structural operations on a presentation.
 
@@ -473,7 +475,10 @@ def gslides_manage(
     - "get_thumbnail" — get slide PNG URL (uses: slide_id)
     - "insert_table_rows" — add rows (uses: table_id, row_index, count)
     - "delete_table_row" — remove row (uses: table_id, row_index)
+    - "insert_table_columns" — add columns (uses: table_id, col_index, count)
+    - "delete_table_column" — remove column (uses: table_id, col_index)
     - "merge_table_cells" — merge cells (uses: table_id, row_index, col_index, row_span, col_span)
+    - "create_video" — embed YouTube or Drive video (uses: slide_id, video_id or image_url as video_url, source=YOUTUBE/DRIVE)
     - "list_layouts" — list available layouts in the deck (for from_layout slides)
     - "create_from_template" — copy a template deck, clear content, return clean deck with theme (uses: find as template_id, name, folder_id)
     - "align" — align/distribute elements on a slide (uses: slide_id, operation=auto/align_left/align_center/align_right/align_top/align_middle/align_bottom/distribute_h/distribute_v)
@@ -502,8 +507,10 @@ def gslides_manage(
         replacements: Dict of find→replace pairs
         theme: Theme name (modern/corporate/dark/warm)
         footer: Footer text
-        image_url: Image URL for replace_image
+        image_url: Image URL for replace_image (or video URL for create_video)
         placeholder_text: Text to match for replace_image
+        video_id: Video ID — YouTube video ID or Drive file ID (create_video)
+        source: Video source — YOUTUBE or DRIVE (create_video)
     """
     a = action.lower()
 
@@ -558,9 +565,25 @@ def gslides_manage(
     elif a == "delete_table_row":
         r = slides_service.delete_table_row(presentation_id, table_id, row_index)
         return f"Deleted row {r['row_deleted']}"
+    elif a == "insert_table_columns":
+        r = slides_service.insert_table_columns(presentation_id, table_id, col_index, count)
+        return f"Added {r['columns_added']} column(s)"
+    elif a == "delete_table_column":
+        r = slides_service.delete_table_column(presentation_id, table_id, col_index)
+        return f"Deleted column {r['column_deleted']}"
     elif a == "merge_table_cells":
         r = slides_service.merge_table_cells(presentation_id, table_id, row_index, col_index, row_span, col_span)
         return f"Merged {r['merged']}"
+    elif a == "create_video":
+        vid = video_id
+        vid_source = source.upper()
+        # Extract video ID from YouTube URLs if provided via image_url param
+        if not vid and image_url:
+            vid, vid_source = slides_service.parse_video_url(image_url)
+        if not vid:
+            return "ERROR: Provide video_id or a YouTube/Drive URL via image_url"
+        r = slides_service.create_video(presentation_id, slide_id, vid, vid_source)
+        return f"Embedded {vid_source} video `{r['video_id']}` on slide `{r['slide_id']}`"
     elif a == "list_layouts":
         layouts = slides_service.list_layouts(presentation_id)
         lines = [f"Available layouts ({len(layouts)}):\n"]

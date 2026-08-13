@@ -2839,3 +2839,71 @@ def _extract_text(text_elements: list) -> str:
         if tr:
             parts.append(tr.get("content", ""))
     return "".join(parts).strip()
+
+
+def parse_video_url(url: str) -> tuple[str, str]:
+    """Extract video ID and source from a YouTube or Google Drive URL.
+
+    Returns (video_id, source) where source is 'YOUTUBE' or 'DRIVE'.
+    Raises ValueError if the URL cannot be parsed.
+    """
+    import re
+
+    # YouTube patterns
+    yt_patterns = [
+        r'(?:youtube\.com/watch\?.*v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/)([a-zA-Z0-9_-]{11})',
+    ]
+    for pattern in yt_patterns:
+        m = re.search(pattern, url)
+        if m:
+            return m.group(1), "YOUTUBE"
+
+    # Google Drive patterns: drive.google.com/file/d/FILE_ID/...
+    drive_pattern = r'drive\.google\.com/file/d/([a-zA-Z0-9_-]+)'
+    m = re.search(drive_pattern, url)
+    if m:
+        return m.group(1), "DRIVE"
+
+    raise ValueError(f"Cannot parse video URL: {url}. Provide a YouTube or Google Drive URL, or use video_id directly.")
+
+
+def create_video(
+    presentation_id: str,
+    slide_id: str,
+    video_id: str,
+    source: str = "YOUTUBE",
+) -> dict:
+    """Embed a YouTube or Google Drive video on a slide.
+
+    Centers the video on the slide at 60% of canvas width.
+    """
+    from .design import CANVAS_W, CANVAS_H
+
+    service = _get_service()
+
+    # Size: 60% of canvas width, 16:9 aspect ratio
+    video_w = int(CANVAS_W * 0.6)
+    video_h = int(video_w * 9 / 16)
+
+    # Center on slide
+    x = (CANVAS_W - video_w) // 2
+    y = (CANVAS_H - video_h) // 2
+
+    vid_obj_id = _new_id()
+    reqs = [{
+        "createVideo": {
+            "objectId": vid_obj_id,
+            "source": source.upper(),
+            "id": video_id,
+            "elementProperties": {
+                "pageObjectId": slide_id,
+                "size": _emu_size(video_w, video_h),
+                "transform": _emu_transform(x, y),
+            },
+        }
+    }]
+
+    execute_with_retry(service.presentations().batchUpdate(
+        presentationId=presentation_id, body={"requests": reqs}))
+
+    return {"slide_id": slide_id, "video_id": vid_obj_id}
