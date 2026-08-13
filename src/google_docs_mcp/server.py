@@ -90,7 +90,7 @@ def _handle_errors(func):
                 return f"ERROR: Google API returned {status}: {e._get_reason()}"
         except RuntimeError as e:
             return f"ERROR: {e}"
-        except FileNotFoundError as e:
+        except (FileNotFoundError, ValueError) as e:
             return f"ERROR: {e}"
         except Exception as e:
             return f"ERROR: Unexpected error — {type(e).__name__}: {e}"
@@ -212,6 +212,9 @@ def gdocs_write(
     image_url: str = "",
     width_pt: float | None = None,
     height_pt: float | None = None,
+    table_index: int = 0,
+    row_index: int = 0,
+    cells: list[str] | None = None,
     parent_heading: str = "",
     occurrence: int = 1,
 ) -> str:
@@ -225,6 +228,8 @@ def gdocs_write(
     - Use "delete_section" to remove an entire section (heading + content)
     - Use "add_heading" to insert a new heading at a specific position
     - Use "add_table" to insert a formatted table at a specific position
+    - Use "add_table_row" to insert a row into an existing table
+    - Use "delete_table" to remove an entire table by index
     - Use "insert_image" for inline images from public URLs
 
     ACTIONS:
@@ -235,6 +240,8 @@ def gdocs_write(
     - "delete_section" — delete a section by heading (uses: heading_text)
     - "add_heading" — insert a heading (uses: text, level, before_heading or after_heading)
     - "add_table" — insert a formatted table (uses: headers, rows, before_heading or after_heading)
+    - "add_table_row" — insert a row into an existing table (uses: table_index, row_index, cells)
+    - "delete_table" — remove an entire table (uses: table_index)
     - "insert_image" — insert inline image (uses: image_url, width_pt, height_pt, before_heading)
 
     SECTION TARGETING (for actions that use heading references):
@@ -262,12 +269,13 @@ def gdocs_write(
         image_url: Publicly accessible image URL (insert_image action)
         width_pt: Image width in points, 72pt = 1 inch (insert_image action)
         height_pt: Image height in points (insert_image action)
+        table_index: Which table, 0-based (add_table_row, delete_table actions)
+        row_index: Position to insert row at; -1 to append at end (add_table_row action)
+        cells: List of cell values for the new row (add_table_row action)
         parent_heading: Scope heading lookup to a parent heading's section. Useful when multiple
             sections share the same sub-heading name (e.g. parent_heading="Server B" to target
-            "Change History" under Server B). Applies to: insert_at_section, delete_section,
-            replace (scope="section"), add_heading, add_table, insert_image.
+            "Change History" under Server B).
         occurrence: Which occurrence of the heading to target (1=first, 2=second, etc.).
-            Applies after parent_heading filtering if both are provided.
     """
     a = action.lower()
 
@@ -502,6 +510,16 @@ def gdocs_write(
         docs_service.batch_update(document_id, md_requests, preserve_order=True)
         return f"Added {len(headers)}-column table with {len(rows)} data rows"
 
+    elif a == "add_table_row":
+        if cells is None:
+            return "ERROR: cells is required for add_table_row action"
+        result = docs_service.add_table_row(document_id, table_index, row_index, cells)
+        return f"Inserted row at position {result['actual_row']} in table {table_index} ({result['cells_filled']} cell(s) filled)"
+
+    elif a == "delete_table":
+        result = docs_service.delete_table(document_id, table_index)
+        return f"Deleted table {table_index}"
+
     elif a == "insert_image":
         if not image_url:
             return "ERROR: image_url is required for insert_image action"
@@ -519,7 +537,7 @@ def gdocs_write(
         return f"Inserted image (object: `{result['object_id']}`)"
 
     else:
-        return f"ERROR: Unknown action '{action}'. Use: write_markdown, append_markdown, insert_at_section, replace, delete_section, add_heading, add_table, insert_image"
+        return f"ERROR: Unknown action '{action}'. Use: write_markdown, append_markdown, insert_at_section, replace, delete_section, add_heading, add_table, add_table_row, delete_table, insert_image"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -540,6 +558,12 @@ def gdocs_edit(
     margin_bottom: float | None = None,
     margin_left: float | None = None,
     margin_right: float | None = None,
+    header_bold: bool = False,
+    header_bg_color: str | None = None,
+    alt_row_color: str | None = None,
+    border_color: str | None = None,
+    border_width_pt: float | None = None,
+    column_widths: list[int] | None = None,
 ) -> str:
     """Edit formatting, audit quality, or modify tables in a Google Doc. The `action` parameter selects the operation.
 
@@ -549,6 +573,7 @@ def gdocs_edit(
     - Use "highlight" to mark text for review or emphasis
     - Use "page_setup" to adjust margins (72pt = 1 inch, narrow = 36pt)
     - Use "delete_table_row" and "update_table_cell" for table edits
+    - Use "style_table" to format tables with headers, borders, and colors
 
     ACTIONS:
     - "highlight" — highlight all occurrences of text with a color (uses: text, color)
@@ -557,19 +582,26 @@ def gdocs_edit(
     - "page_setup" — update document margins (uses: margin_top, margin_bottom, margin_left, margin_right — values in points)
     - "delete_table_row" — delete a row from a table (uses: table_index, row_index)
     - "update_table_cell" — update text in a specific table cell (uses: table_index, row_index, col, text)
+    - "style_table" — style a table with headers, borders, colors, column widths (uses: table_index, header_bold, header_bg_color, alt_row_color, border_color, border_width_pt, column_widths)
 
     Args:
         document_id: The Google Doc ID
         action: Edit operation (see above)
         text: Text to highlight (highlight action) or new cell content (update_table_cell action)
         color: Highlight color — yellow, green, blue, red, orange, purple (highlight action)
-        table_index: Which table, 0-based (delete_table_row, update_table_cell actions)
+        table_index: Which table, 0-based (delete_table_row, update_table_cell, style_table actions)
         row_index: Which row, 0-based (delete_table_row, update_table_cell actions)
         col: Column index, 0-based (update_table_cell action)
         margin_top: Top margin in points (page_setup action)
         margin_bottom: Bottom margin in points (page_setup action)
         margin_left: Left margin in points (page_setup action)
         margin_right: Right margin in points (page_setup action)
+        header_bold: Bold the header row text (style_table action)
+        header_bg_color: Header background color as hex, e.g. '#E8EAED' (style_table action)
+        alt_row_color: Alternating row background color as hex, e.g. '#F8F9FA' (style_table action)
+        border_color: Border color as hex, e.g. '#DADCE0' (style_table action)
+        border_width_pt: Border width in points, e.g. 0.5 (style_table action)
+        column_widths: Column width percentages, e.g. [30, 70] (style_table action)
     """
     a = action.lower()
 
@@ -668,8 +700,23 @@ def gdocs_edit(
             docs_service.batch_update(document_id, requests, preserve_order=True)
         return f"Updated cell [{row_index},{col}] in table {table_index} to '{text}'"
 
+    elif a == "style_table":
+        result = docs_service.style_table(
+            document_id,
+            table_index,
+            header_bold=header_bold,
+            header_bg_color=header_bg_color,
+            alt_row_color=alt_row_color,
+            border_color=border_color,
+            border_width_pt=border_width_pt,
+            column_widths=column_widths,
+        )
+        if not result.get("styled"):
+            return "ERROR: No styling parameters provided. Use header_bold, header_bg_color, alt_row_color, border_color, border_width_pt, or column_widths."
+        return f"Styled table {table_index}: {', '.join(result['applied'])}"
+
     else:
-        return f"ERROR: Unknown action '{action}'. Use: highlight, cleanup, audit, page_setup, delete_table_row, update_table_cell"
+        return f"ERROR: Unknown action '{action}'. Use: highlight, cleanup, audit, page_setup, delete_table_row, update_table_cell, style_table"
 
 
 # ═══════════════════════════════════════════════════════════════
