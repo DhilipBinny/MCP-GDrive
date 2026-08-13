@@ -115,11 +115,11 @@ def insert_inline_image(
     else:
         req["endOfSegmentLocation"] = {"segmentId": ""}
 
-    if width_pt or height_pt:
+    if width_pt is not None or height_pt is not None:
         size = {}
-        if width_pt:
+        if width_pt is not None:
             size["width"] = {"magnitude": width_pt, "unit": "PT"}
-        if height_pt:
+        if height_pt is not None:
             size["height"] = {"magnitude": height_pt, "unit": "PT"}
         req["objectSize"] = size
 
@@ -402,9 +402,7 @@ def _body_to_markdown(body: dict, lists: dict | None = None) -> str:
                             text = text.replace(stripped, f"**{stripped}**", 1)
                     if ts.get("italic"):
                         stripped = text.strip()
-                        # Strip any ** markers before wrapping with *
-                        inner = stripped.strip("*")
-                        if inner:
+                        if stripped:
                             text = text.replace(stripped, f"*{stripped}*", 1)
                     if ts.get("strikethrough"):
                         stripped = text.strip()

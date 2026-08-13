@@ -151,6 +151,7 @@ def find_in_sheet(
     query: str,
     sheet_name: str | None = None,
     match_case: bool = False,
+    max_rows: int = 200000,
 ) -> list[dict]:
     service = _get_service()
     info = get_info(spreadsheet_id)
@@ -167,7 +168,7 @@ def find_in_sheet(
         result = execute_with_retry(
             service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
-                range=f"{qname}!A:ZZ",
+                range=f"{qname}!A1:ZZ{max_rows}",
                 valueRenderOption="FORMATTED_VALUE",
             )
         )
