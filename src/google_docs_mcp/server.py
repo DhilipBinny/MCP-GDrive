@@ -608,7 +608,7 @@ def gdocs_edit(
     - Use "highlight" to mark text for review or emphasis
     - Use "text_color" to change text foreground color (hex color codes)
     - Use "set_font" to change font family for specific text or the whole document
-    - Use "add_header" / "add_footer" to create document headers and footers
+    - Use "add_header" / "add_footer" to create or update document headers and footers (idempotent — replaces existing content)
     - Use "page_setup" to adjust margins (72pt = 1 inch, narrow = 36pt)
     - Use "delete_table_row" and "update_table_cell" for table edits
     - Use "style_table" to format tables with headers, borders, and colors
@@ -617,8 +617,8 @@ def gdocs_edit(
     - "highlight" — highlight all occurrences of text with a color (uses: text, color)
     - "text_color" — change foreground color of matching text (uses: text, color as hex e.g. '#811a1b', scope)
     - "set_font" — change font family for text or entire doc (uses: font_family, text optional, scope)
-    - "add_header" — create a document header with text (uses: text, alignment)
-    - "add_footer" — create a document footer with text (uses: text, alignment)
+    - "add_header" — create or update document header (uses: text, alignment). Idempotent — replaces existing content.
+    - "add_footer" — create or update document footer (uses: text, alignment). Idempotent — replaces existing content. Note: page number fields are not supported by the Google Docs API — use text like "Page X" as literal placeholder.
     - "cleanup" — auto-fix formatting issues: duplicate blank lines, heading style leaks, bold inheritance, table font sizes
     - "audit" — generate a quality report: paragraph count, table count, heading structure, font consistency, issues
     - "page_setup" — update document margins (uses: margin_top, margin_bottom, margin_left, margin_right — values in points)
