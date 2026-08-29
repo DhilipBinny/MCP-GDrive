@@ -701,71 +701,90 @@ def set_font(document_id: str, font_family: str, text: str | None = None, scope:
     return {"font_family": font_family, "applied_to": description}
 
 
+def _get_existing_header_footer_id(document_id: str, location: str) -> str | None:
+    """Find the existing header or footer segment ID, if any."""
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
+    ds = doc_tab.get("documentStyle", {}) or doc.get("documentStyle", {})
+    if location == "header":
+        return ds.get("defaultHeaderId") or None
+    return ds.get("defaultFooterId") or None
+
+
+def _clear_segment_content(document_id: str, segment_id: str) -> None:
+    """Delete all content from a header/footer segment, leaving it empty."""
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
+    sections = doc_tab.get("headers", {}) if segment_id.startswith("kix.") else {}
+    sections.update(doc_tab.get("footers", {}))
+    section = sections.get(segment_id, {})
+    content = section.get("content", [])
+    if not content:
+        return
+    end_idx = max(e.get("endIndex", 0) for e in content)
+    if end_idx <= 1:
+        return
+    batch_update(document_id, [{
+        "deleteContentRange": {
+            "range": {"segmentId": segment_id, "startIndex": 0, "endIndex": end_idx - 1}
+        }
+    }])
+
+
 def add_header_footer(document_id: str, location: str, text: str, alignment: str = "left") -> dict:
-    """Create a header or footer and insert text with alignment.
+    """Create or update a header/footer with text and alignment.
+
+    Idempotent: if a header/footer already exists, its content is replaced.
 
     Args:
         document_id: The Google Doc ID
         location: "header" or "footer"
-        text: Text to insert into the header/footer
+        text: Text to insert. Note: {page} and {pages} are literal text —
+              the Google Docs API does not support inserting page number fields.
         alignment: Paragraph alignment — "left", "center", "right"
     """
     service = _get_service()
+    segment_id = _get_existing_header_footer_id(document_id, location)
 
-    # Create the header/footer section
-    if location == "header":
-        create_request = {"createHeader": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
+    if segment_id:
+        _clear_segment_content(document_id, segment_id)
     else:
-        create_request = {"createFooter": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
-
-    result = execute_with_retry(
-        service.documents().batchUpdate(
-            documentId=document_id,
-            body={"requests": [create_request]},
+        if location == "header":
+            create_request = {"createHeader": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
+        else:
+            create_request = {"createFooter": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
+        result = execute_with_retry(
+            service.documents().batchUpdate(
+                documentId=document_id,
+                body={"requests": [create_request]},
+            )
         )
-    )
+        replies = result.get("replies", [{}])
+        if location == "header":
+            segment_id = replies[0].get("createHeader", {}).get("headerId", "")
+        else:
+            segment_id = replies[0].get("createFooter", {}).get("footerId", "")
+        if not segment_id:
+            raise RuntimeError(f"Failed to create {location} — no segment ID returned")
 
-    # Extract the segment ID from the response
-    replies = result.get("replies", [{}])
-    if location == "header":
-        segment_id = replies[0].get("createHeader", {}).get("headerId", "")
-    else:
-        segment_id = replies[0].get("createFooter", {}).get("footerId", "")
-
-    if not segment_id:
-        raise RuntimeError(f"Failed to create {location} — no segment ID returned")
-
-    # Insert text into the header/footer
-    insert_requests = [
-        {
-            "insertText": {
-                "location": {"segmentId": segment_id, "index": 0},
-                "text": text,
-            }
-        }
+    requests = [
+        {"insertText": {"location": {"segmentId": segment_id, "index": 0}, "text": text}}
     ]
 
-    # Apply alignment
-    alignment_map = {
-        "left": "START",
-        "center": "CENTER",
-        "right": "END",
-    }
+    alignment_map = {"left": "START", "center": "CENTER", "right": "END"}
     api_alignment = alignment_map.get(alignment.lower(), "START")
     text_end = utf16_len(text)
-    insert_requests.append({
+    requests.append({
         "updateParagraphStyle": {
-            "range": {
-                "segmentId": segment_id,
-                "startIndex": 0,
-                "endIndex": text_end,
-            },
+            "range": {"segmentId": segment_id, "startIndex": 0, "endIndex": text_end},
             "paragraphStyle": {"alignment": api_alignment},
             "fields": "alignment",
         }
     })
 
-    batch_update(document_id, insert_requests, preserve_order=True)
+    batch_update(document_id, requests, preserve_order=True)
 
     return {"segment_id": segment_id, "location": location, "text": text, "alignment": alignment}
 
