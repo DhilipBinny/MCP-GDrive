@@ -212,6 +212,8 @@ def gdocs_write(
     image_url: str = "",
     width_pt: float | None = None,
     height_pt: float | None = None,
+    after_text: str = "",
+    index: int | None = None,
     table_index: int = 0,
     row_index: int = 0,
     cells: list[str] | None = None,
@@ -243,7 +245,7 @@ def gdocs_write(
     - "add_table" — insert a formatted table (uses: headers, rows, before_heading or after_heading)
     - "add_table_row" — insert a row into an existing table (uses: table_index, row_index, cells)
     - "delete_table" — remove an entire table (uses: table_index)
-    - "insert_image" — insert inline image (uses: image_url, width_pt, height_pt, before_heading)
+    - "insert_image" — insert inline image (uses: image_url, width_pt, height_pt, before_heading or after_heading or after_text or index)
     - "insert_page_break" — insert a page break before a heading (uses: before_heading, parent_heading, occurrence)
 
     SECTION TARGETING (for actions that use heading references):
@@ -271,6 +273,8 @@ def gdocs_write(
         image_url: Publicly accessible image URL (insert_image action)
         width_pt: Image width in points, 72pt = 1 inch (insert_image action)
         height_pt: Image height in points (insert_image action)
+        after_text: Insert image after the paragraph containing this text (insert_image action)
+        index: Insert image at this exact document index (insert_image action)
         table_index: Which table, 0-based (add_table_row, delete_table actions)
         row_index: Position to insert row at; -1 to append at end (add_table_row action)
         cells: List of cell values for the new row (add_table_row action)
@@ -525,7 +529,7 @@ def gdocs_write(
     elif a == "insert_image":
         if not image_url:
             return "ERROR: image_url is required for insert_image action"
-        index = None
+        insert_idx = None
         heading = before_heading or after_heading
         if heading:
             boundaries = docs_service.get_section_boundaries(
@@ -534,8 +538,28 @@ def gdocs_write(
             )
             if not boundaries:
                 return f"ERROR: Heading '{heading}' not found"
-            index = boundaries["heading_start"] if before_heading else _safe_insert_index(document_id, boundaries["content_end"])
-        result = docs_service.insert_inline_image(document_id, image_url, index, width_pt, height_pt)
+            insert_idx = boundaries["heading_start"] if before_heading else _safe_insert_index(document_id, boundaries["content_end"])
+        elif after_text:
+            # Find the text and insert at the end of its containing paragraph
+            doc = docs_service.read_document_raw(document_id)
+            tabs = doc.get("tabs", [])
+            body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+            hits = docs_service._find_text_in_body(body, after_text)
+            if not hits:
+                return f"ERROR: Text '{after_text}' not found in document"
+            hit_start = hits[0][0]
+            # Find the paragraph element containing the hit
+            for elem in body.get("content", []):
+                e_start = elem.get("startIndex", 0)
+                e_end = elem.get("endIndex", 0)
+                if e_start <= hit_start < e_end:
+                    insert_idx = _safe_insert_index(document_id, e_end, body=body)
+                    break
+            if insert_idx is None:
+                insert_idx = hits[0][1]
+        elif index is not None:
+            insert_idx = index
+        result = docs_service.insert_inline_image(document_id, image_url, insert_idx, width_pt, height_pt)
         return f"Inserted image (object: `{result['object_id']}`)"
 
     elif a == "insert_page_break":
@@ -558,7 +582,10 @@ def gdocs_edit(
     document_id: str,
     action: str,
     text: str = "",
-    color: Literal["yellow", "green", "blue", "red", "orange", "purple"] = "yellow",
+    color: str = "yellow",
+    scope: Literal["all", "first"] = "all",
+    font_family: str = "",
+    alignment: Literal["left", "center", "right"] = "left",
     table_index: int = 0,
     row_index: int = 0,
     col: int = 0,
@@ -579,12 +606,19 @@ def gdocs_edit(
     - Run "audit" first to understand the document's formatting state
     - Use "cleanup" to auto-fix common formatting issues
     - Use "highlight" to mark text for review or emphasis
+    - Use "text_color" to change text foreground color (hex color codes)
+    - Use "set_font" to change font family for specific text or the whole document
+    - Use "add_header" / "add_footer" to create document headers and footers
     - Use "page_setup" to adjust margins (72pt = 1 inch, narrow = 36pt)
     - Use "delete_table_row" and "update_table_cell" for table edits
     - Use "style_table" to format tables with headers, borders, and colors
 
     ACTIONS:
     - "highlight" — highlight all occurrences of text with a color (uses: text, color)
+    - "text_color" — change foreground color of matching text (uses: text, color as hex e.g. '#811a1b', scope)
+    - "set_font" — change font family for text or entire doc (uses: font_family, text optional, scope)
+    - "add_header" — create a document header with text (uses: text, alignment)
+    - "add_footer" — create a document footer with text (uses: text, alignment)
     - "cleanup" — auto-fix formatting issues: duplicate blank lines, heading style leaks, bold inheritance, table font sizes
     - "audit" — generate a quality report: paragraph count, table count, heading structure, font consistency, issues
     - "page_setup" — update document margins (uses: margin_top, margin_bottom, margin_left, margin_right — values in points)
@@ -595,8 +629,11 @@ def gdocs_edit(
     Args:
         document_id: The Google Doc ID
         action: Edit operation (see above)
-        text: Text to highlight (highlight action) or new cell content (update_table_cell action)
-        color: Highlight color — yellow, green, blue, red, orange, purple (highlight action)
+        text: Text to target (highlight, text_color, set_font, add_header, add_footer, update_table_cell)
+        color: Highlight color name — yellow/green/blue/red/orange/purple (highlight action), or hex color e.g. '#811a1b' (text_color action)
+        scope: "all" (all occurrences) or "first" (first only) — for text_color and set_font actions
+        font_family: Font family name, e.g. 'Roboto', 'Georgia' (set_font action)
+        alignment: Text alignment — left, center, right (add_header, add_footer actions)
         table_index: Which table, 0-based (delete_table_row, update_table_cell, style_table actions)
         row_index: Which row, 0-based (delete_table_row, update_table_cell actions)
         col: Column index, 0-based (update_table_cell action)
@@ -627,6 +664,27 @@ def gdocs_edit(
         rgb = color_map.get(color, color_map["yellow"])
         result = formatter.highlight_text(document_id, text, rgb)
         return f"Highlighted {result['occurrences_highlighted']} occurrence(s) in {color}"
+
+    elif a == "text_color":
+        if not text:
+            return "ERROR: text is required for text_color action"
+        if not color or color in ("yellow", "green", "blue", "red", "orange", "purple"):
+            return "ERROR: color must be a hex color code (e.g. '#811a1b') for text_color action"
+        result = docs_service.set_text_color(document_id, text, color, scope=scope)
+        return f"Changed color of {result['occurrences_changed']} occurrence(s) to {color}"
+
+    elif a == "set_font":
+        if not font_family:
+            return "ERROR: font_family is required for set_font action"
+        result = docs_service.set_font(document_id, font_family, text=text or None, scope=scope)
+        return f"Set font to '{result['font_family']}' for {result['applied_to']}"
+
+    elif a in ("add_header", "add_footer"):
+        if not text:
+            return f"ERROR: text is required for {a} action"
+        location = "header" if a == "add_header" else "footer"
+        result = docs_service.add_header_footer(document_id, location, text, alignment=alignment)
+        return f"Created {result['location']} (ID: `{result['segment_id']}`) with alignment={result['alignment']}"
 
     elif a == "cleanup":
         result = formatter.cleanup_document(document_id)
@@ -724,7 +782,7 @@ def gdocs_edit(
         return f"Styled table {table_index}: {', '.join(result['applied'])}"
 
     else:
-        return f"ERROR: Unknown action '{action}'. Use: highlight, cleanup, audit, page_setup, delete_table_row, update_table_cell, style_table"
+        return f"ERROR: Unknown action '{action}'. Use: highlight, text_color, set_font, add_header, add_footer, cleanup, audit, page_setup, delete_table_row, update_table_cell, style_table"
 
 
 # ═══════════════════════════════════════════════════════════════

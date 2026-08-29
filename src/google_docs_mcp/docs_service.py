@@ -5,7 +5,7 @@ from __future__ import annotations
 from googleapiclient.discovery import build
 
 from shared.auth import get_credentials
-from shared.utils import execute_with_retry, batch_update as _batch_update
+from shared.utils import execute_with_retry, batch_update as _batch_update, hex_to_rgb, utf16_len
 
 _service = None
 
@@ -471,8 +471,6 @@ def style_table(
     column_widths: list[int] | None = None,
 ) -> dict:
     """Style a table with header formatting, borders, alternating row colors, and column widths."""
-    from shared.utils import hex_to_rgb
-
     doc = read_document_raw(document_id)
     tabs = doc.get("tabs", [])
     body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
@@ -597,6 +595,179 @@ def style_table(
     if column_widths: applied.append("column widths")
 
     return {"styled": True, "applied": applied}
+
+
+def _find_text_in_body(body: dict, search_text: str) -> list[tuple[int, int]]:
+    """Find all occurrences of search_text in body paragraphs and table cells.
+
+    Returns list of (doc_start, doc_end) tuples using UTF-16 indices.
+    Reuses the same traversal pattern as highlight and scoped replace.
+    """
+    from google_docs_mcp.formatter import _search_text_runs
+
+    all_hits: list[tuple[int, int]] = []
+    for elem in body.get("content", []):
+        if "paragraph" in elem:
+            all_hits.extend(_search_text_runs([elem["paragraph"]], search_text))
+        elif "table" in elem:
+            for row in elem["table"].get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    for ce in cell.get("content", []):
+                        if "paragraph" in ce:
+                            all_hits.extend(_search_text_runs([ce["paragraph"]], search_text))
+    return all_hits
+
+
+def set_text_color(document_id: str, text: str, color: str, scope: str = "all") -> dict:
+    """Change the foreground color of matching text.
+
+    Args:
+        document_id: The Google Doc ID
+        text: Text to find and recolor
+        color: Hex color string (e.g. '#811a1b')
+        scope: "all" for all occurrences, "first" for first only
+    """
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+
+    all_hits = _find_text_in_body(body, text)
+    if scope == "first" and all_hits:
+        all_hits = [all_hits[0]]
+
+    rgb = hex_to_rgb(color)
+    requests = []
+    for doc_start, doc_end in all_hits:
+        requests.append({
+            "updateTextStyle": {
+                "range": {"startIndex": doc_start, "endIndex": doc_end},
+                "textStyle": {"foregroundColor": {"color": {"rgbColor": rgb}}},
+                "fields": "foregroundColor",
+            }
+        })
+
+    if requests:
+        batch_update(document_id, requests)
+
+    return {"occurrences_changed": len(all_hits)}
+
+
+def set_font(document_id: str, font_family: str, text: str | None = None, scope: str = "all") -> dict:
+    """Change the font family for specific text or the entire document body.
+
+    Args:
+        document_id: The Google Doc ID
+        font_family: Font family name (e.g. 'Roboto', 'Georgia')
+        text: Text to find and restyle. If empty/None, applies to entire document body.
+        scope: "all" for all occurrences, "first" for first only (only when text is provided)
+    """
+    doc = read_document_raw(document_id)
+    tabs = doc.get("tabs", [])
+    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+
+    requests = []
+
+    if text:
+        all_hits = _find_text_in_body(body, text)
+        if scope == "first" and all_hits:
+            all_hits = [all_hits[0]]
+        for doc_start, doc_end in all_hits:
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": doc_start, "endIndex": doc_end},
+                    "textStyle": {"weightedFontFamily": {"fontFamily": font_family}},
+                    "fields": "weightedFontFamily",
+                }
+            })
+        description = f"{len(all_hits)} occurrence(s) of '{text}'"
+    else:
+        # Apply to entire document body
+        content = body.get("content", [])
+        if content:
+            end_index = content[-1].get("endIndex", 1)
+            if end_index > 1:
+                requests.append({
+                    "updateTextStyle": {
+                        "range": {"startIndex": 1, "endIndex": end_index},
+                        "textStyle": {"weightedFontFamily": {"fontFamily": font_family}},
+                        "fields": "weightedFontFamily",
+                    }
+                })
+        description = "entire document"
+
+    if requests:
+        batch_update(document_id, requests)
+
+    return {"font_family": font_family, "applied_to": description}
+
+
+def add_header_footer(document_id: str, location: str, text: str, alignment: str = "left") -> dict:
+    """Create a header or footer and insert text with alignment.
+
+    Args:
+        document_id: The Google Doc ID
+        location: "header" or "footer"
+        text: Text to insert into the header/footer
+        alignment: Paragraph alignment — "left", "center", "right"
+    """
+    service = _get_service()
+
+    # Create the header/footer section
+    if location == "header":
+        create_request = {"createHeader": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
+    else:
+        create_request = {"createFooter": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
+
+    result = execute_with_retry(
+        service.documents().batchUpdate(
+            documentId=document_id,
+            body={"requests": [create_request]},
+        )
+    )
+
+    # Extract the segment ID from the response
+    replies = result.get("replies", [{}])
+    if location == "header":
+        segment_id = replies[0].get("createHeader", {}).get("headerId", "")
+    else:
+        segment_id = replies[0].get("createFooter", {}).get("footerId", "")
+
+    if not segment_id:
+        raise RuntimeError(f"Failed to create {location} — no segment ID returned")
+
+    # Insert text into the header/footer
+    insert_requests = [
+        {
+            "insertText": {
+                "location": {"segmentId": segment_id, "index": 0},
+                "text": text,
+            }
+        }
+    ]
+
+    # Apply alignment
+    alignment_map = {
+        "left": "START",
+        "center": "CENTER",
+        "right": "END",
+    }
+    api_alignment = alignment_map.get(alignment.lower(), "START")
+    text_end = utf16_len(text)
+    insert_requests.append({
+        "updateParagraphStyle": {
+            "range": {
+                "segmentId": segment_id,
+                "startIndex": 0,
+                "endIndex": text_end,
+            },
+            "paragraphStyle": {"alignment": api_alignment},
+            "fields": "alignment",
+        }
+    })
+
+    batch_update(document_id, insert_requests, preserve_order=True)
+
+    return {"segment_id": segment_id, "location": location, "text": text, "alignment": alignment}
 
 
 def read_section(
