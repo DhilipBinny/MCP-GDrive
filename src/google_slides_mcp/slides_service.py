@@ -9,6 +9,7 @@ from shared.auth import get_credentials
 from shared.utils import execute_with_retry
 
 _service = None
+_service_creds = None
 _deck_themes: dict[str, str] = {}
 _deck_footers: dict[str, str] = {}
 
@@ -18,10 +19,11 @@ SLIDE_HEIGHT = 5143500
 
 
 def _get_service():
-    global _service
-    if _service is None:
-        creds = get_credentials()
+    global _service, _service_creds
+    creds = get_credentials()
+    if _service is None or creds is not _service_creds:
         _service = build("slides", "v1", credentials=creds)
+        _service_creds = creds
     return _service
 
 
