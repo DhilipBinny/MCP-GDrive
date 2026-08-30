@@ -445,6 +445,8 @@ def gslides_manage(
     folder_id: str = "",
     video_id: str = "",
     source: str = "YOUTUBE",
+    target_presentation_id: str = "",
+    template_id: str = "",
 ) -> str:
     """Structural operations on a presentation.
 
@@ -480,11 +482,11 @@ def gslides_manage(
     - "merge_table_cells" — merge cells (uses: table_id, row_index, col_index, row_span, col_span)
     - "create_video" — embed YouTube or Drive video (uses: slide_id, video_id or image_url as video_url, source=YOUTUBE/DRIVE)
     - "list_layouts" — list available layouts in the deck (for from_layout slides)
-    - "create_from_template" — copy a template deck, clear content, return clean deck with theme (uses: find as template_id, name, folder_id)
+    - "create_from_template" — copy a template deck, clear content, return clean deck with theme (uses: template_id, name, folder_id)
     - "align" — align/distribute elements on a slide (uses: slide_id, operation=auto/align_left/align_center/align_right/align_top/align_middle/align_bottom/distribute_h/distribute_v)
     - "get_image_url" — extract image URL from an element (uses: element_id). Returns source_url + temporary content_url
-    - "clone_slide" — copy slide within or across presentations (uses: slide_id, find=target_presentation_id, position). Cross-deck recreates all elements.
-    - "copy_element" — copy element to another presentation (uses: element_id, find=source_presentation_id, slide_id=target_slide_id, image_url=target_presentation_id)
+    - "clone_slide" — copy slide within or across presentations (uses: slide_id, target_presentation_id, position). Cross-deck recreates all elements.
+    - "copy_element" — copy element to another presentation (uses: element_id, target_presentation_id, slide_id=target_slide_id)
 
     Args:
         presentation_id: The presentation ID
@@ -511,6 +513,8 @@ def gslides_manage(
         placeholder_text: Text to match for replace_image
         video_id: Video ID — YouTube video ID or Drive file ID (create_video)
         source: Video source — YOUTUBE or DRIVE (create_video)
+        target_presentation_id: Target presentation ID for clone_slide and copy_element
+        template_id: Template presentation file ID for create_from_template
     """
     a = action.lower()
 
@@ -592,7 +596,10 @@ def gslides_manage(
             lines.append(f"- **{l['name']}** `{l['layout_id']}`\n  Placeholders: {phs or 'none'}")
         return "\n".join(lines)
     elif a == "create_from_template":
-        r = slides_service.create_from_template(find, name, folder_id or None)
+        tmpl_id = template_id or find
+        if not tmpl_id:
+            return "ERROR: template_id is required for create_from_template action"
+        r = slides_service.create_from_template(tmpl_id, name, folder_id or None)
         lines = [f"Created from template: **{r['title']}** (`{r['presentation_id']}`)\nURL: {r['url']}\n\nAvailable layouts:"]
         for l in r["layouts"]:
             phs = ", ".join(f"{p['type']}[{p['index']}]" for p in l["placeholders"])
@@ -614,15 +621,15 @@ def gslides_manage(
         if r.get("width_emu"): parts.append(f"  Size: {r['width_emu']}x{r['height_emu']} EMU")
         return "\n".join(parts)
     elif a == "clone_slide":
-        target_pres = find or None
+        target_pres = target_presentation_id or find or None
         r = slides_service.clone_slide(presentation_id, slide_id, target_pres, position)
         if "error" in r:
             return f"ERROR: {r['error']}"
         return f"Cloned slide → `{r['slide_id']}` ({r['method']}, {r.get('elements_copied', 'native')} elements) in `{r['presentation_id']}`"
     elif a == "copy_element":
-        target_pres = image_url or find
+        target_pres = target_presentation_id or image_url or find
         if not target_pres:
-            return "ERROR: Provide target presentation ID via find or image_url param"
+            return "ERROR: Provide target_presentation_id for copy_element action"
         x_pos = None
         y_pos = None
         r = slides_service.copy_element(presentation_id, element_id, target_pres, slide_id, x_pos, y_pos)
@@ -858,7 +865,7 @@ def gdrive_ops(
     folder_id: str = "",
     local_path: str = "",
     name: str = "",
-    import_format: str = "pdf",
+    format: str = "pdf",
     output_path: str = "",
     email: str = "",
     role: str = "reader",
@@ -916,7 +923,7 @@ def gdrive_ops(
         r = drive_service.upload_file(local_path, name or None, folder_id or None)
         return f"Uploaded **{r['name']}** (`{r['id']}`)"
     elif a == "export":
-        r = drive_service.export_file(file_id, import_format, output_path or None)
+        r = drive_service.export_file(file_id, format, output_path or None)
         return f"Exported → **{r['path']}** ({r['size']/1024:.1f} KB)"
     elif a == "share":
         r = drive_service.share_file(file_id, email or None, role, anyone)
