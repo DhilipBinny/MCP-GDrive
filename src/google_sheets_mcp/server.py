@@ -133,16 +133,16 @@ def gsheets_read(
     - render="formula" reveals formulas; render="raw" gives unformatted numbers
 
     ACTIONS:
-    - "read" — read cell values as a markdown table (uses: range, render)
+    - "read" — read cell values as a markdown table (uses: cell_range, render)
     - "info" — get spreadsheet metadata: title, tabs, row/column counts (no extra params)
     - "find" — search for text across cells (uses: query, sheet_name, match_case)
-    - "read_format" — inspect cell formatting: colors, fonts, alignment, borders, merges (uses: range)
+    - "read_format" — inspect cell formatting: colors, fonts, alignment, borders, merges (uses: cell_range)
     - "list_conditional_formats" — list all conditional formatting rules on a sheet (uses: sheet_name)
 
     Args:
         spreadsheet_id: The spreadsheet ID
         action: Operation — "read", "info", "find", "read_format", or "list_conditional_formats"
-        range: A1 notation range for read/read_format (e.g. "A1:D10", "Sheet1!A1:D10", "A:A")
+        cell_range: A1 notation range for read/read_format (e.g. "A1:D10", "Sheet1!A1:D10", "A:A")
         render: Value rendering for read — "formatted" ($1,234.56), "raw" (1234.56), or "formula" (=SUM(A1:A5))
         query: Text to search for (find action)
         sheet_name: Tab name — required for list_conditional_formats, optional filter for find
@@ -290,14 +290,14 @@ def gsheets_write(
       (e.g. "yyyy-MM-dd", "MM/dd/yyyy", "dd/MM/yyyy", "MMM d, yyyy")
 
     ACTIONS:
-    - "write" — overwrite a range with new values (uses: range, values, input_mode, date_format)
-    - "append" — append rows after the last data row (uses: range, values)
-    - "clear" — clear all values in a range, formatting preserved (uses: range)
+    - "write" — overwrite a range with new values (uses: cell_range, values, input_mode, date_format)
+    - "append" — append rows after the last data row (uses: cell_range, values)
+    - "clear" — clear all values in a range, formatting preserved (uses: cell_range)
 
     Args:
         spreadsheet_id: The spreadsheet ID
         action: Operation — "write", "append", or "clear"
-        range: A1 notation range (e.g. "Sheet1!A1:C3", "A1")
+        cell_range: A1 notation range (e.g. "Sheet1!A1:C3", "A1")
         values: 2D array of values — [[row1col1, row1col2], [row2col1, row2col2]]
         input_mode: For write — "user" (parse formulas/dates) or "raw" (literal strings)
         date_format: Date format pattern for write action (e.g. "yyyy-MM-dd"). When set,
@@ -382,18 +382,18 @@ def gsheets_format(
     - Use action="data_validation" with rule_type="ONE_OF_LIST" for dropdown menus
 
     ACTIONS:
-    - "style" — cell formatting (uses: range, bold, italic, font_size, font_family, foreground_color, background_color, horizontal_alignment, vertical_alignment, wrap_strategy, number_format, number_format_pattern)
-    - "borders" — add borders (uses: range, style, color, edges). Edges: all, outer, inner, top, bottom, left, right
-    - "merge" — merge cells (uses: range, merge_type). Types: MERGE_ALL, MERGE_COLUMNS, MERGE_ROWS
-    - "unmerge" — unmerge cells (uses: range)
-    - "conditional_format" — conditional formatting (uses: range, rule_type, values, bg_color, text_color, bold, custom_formula). Rule types: NUMBER_GREATER, NUMBER_LESS, NUMBER_BETWEEN, TEXT_CONTAINS, TEXT_NOT_CONTAINS, BLANK, NOT_BLANK, CUSTOM_FORMULA
+    - "style" — cell formatting (uses: cell_range, bold, italic, font_size, font_family, foreground_color, background_color, horizontal_alignment, vertical_alignment, wrap_strategy, number_format, number_format_pattern)
+    - "borders" — add borders (uses: cell_range, style, color, edges). Edges: all, outer, inner, top, bottom, left, right
+    - "merge" — merge cells (uses: cell_range, merge_type). Types: MERGE_ALL, MERGE_COLUMNS, MERGE_ROWS
+    - "unmerge" — unmerge cells (uses: cell_range)
+    - "conditional_format" — conditional formatting (uses: cell_range, rule_type, values, bg_color, text_color, bold, custom_formula). Rule types: NUMBER_GREATER, NUMBER_LESS, NUMBER_BETWEEN, TEXT_CONTAINS, TEXT_NOT_CONTAINS, BLANK, NOT_BLANK, CUSTOM_FORMULA
     - "delete_conditional_format" — delete a conditional formatting rule by index (uses: sheet_name, rule_index). Use gsheets_read(action="list_conditional_formats") first to find the rule index.
-    - "data_validation" — set validation rules (uses: range, rule_type, values, strict, input_message). Rule types: ONE_OF_LIST, NUMBER_BETWEEN, TEXT_IS_EMAIL, DATE_AFTER
+    - "data_validation" — set validation rules (uses: cell_range, rule_type, values, strict, input_message). Rule types: ONE_OF_LIST, NUMBER_BETWEEN, TEXT_IS_EMAIL, DATE_AFTER
 
     Args:
         spreadsheet_id: The spreadsheet ID
         action: Operation — "style", "borders", "merge", "unmerge", "conditional_format", "delete_conditional_format", "data_validation"
-        range: A1 notation range to format
+        cell_range: A1 notation range to format
         bold: Set bold (style/conditional_format)
         italic: Set italic (style)
         font_size: Font size in points (style)
