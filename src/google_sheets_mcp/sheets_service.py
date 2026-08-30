@@ -8,16 +8,19 @@ from shared.auth import get_credentials
 from shared.utils import (
     execute_with_retry, hex_to_rgb, rgb_to_hex, parse_a1_range,
     parse_values, resolve_sheet_id, quote_sheet_name, index_to_col,
+    extract_sheet_name,
 )
 
 _service = None
+_service_creds = None
 
 
 def _get_service():
-    global _service
-    if _service is None:
-        creds = get_credentials()
+    global _service, _service_creds
+    creds = get_credentials()
+    if _service is None or creds is not _service_creds:
         _service = build("sheets", "v4", credentials=creds)
+        _service_creds = creds
     return _service
 
 
@@ -116,9 +119,7 @@ def write_range(
     )
 
     if date_format:
-        sheet_name = None
-        if "!" in range_str:
-            sheet_name = range_str.split("!")[0].strip("'")
+        sheet_name = extract_sheet_name(range_str)
         sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
         grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -397,9 +398,7 @@ def format_cells(
     service = _get_service()
 
     # Resolve sheet — strip quotes from sheet name (e.g. 'Q2 Data'!A1 → Q2 Data)
-    sheet_name = None
-    if "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -583,8 +582,8 @@ def sort_range(
     sheet_name: str | None = None,
 ) -> dict:
     service = _get_service()
-    if sheet_name is None and "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    if sheet_name is None:
+        sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -721,8 +720,8 @@ def add_conditional_format(
 ) -> dict:
     """Add a conditional formatting rule."""
     service = _get_service()
-    if sheet_name is None and "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    if sheet_name is None:
+        sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -900,8 +899,8 @@ def set_data_validation(
 ) -> dict:
     """Set data validation on a range (dropdown, number range, etc.)."""
     service = _get_service()
-    if sheet_name is None and "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    if sheet_name is None:
+        sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -935,8 +934,8 @@ def merge_cells(
 ) -> dict:
     """Merge cells in a range."""
     service = _get_service()
-    if sheet_name is None and "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    if sheet_name is None:
+        sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -956,8 +955,8 @@ def unmerge_cells(
 ) -> dict:
     """Unmerge previously merged cells."""
     service = _get_service()
-    if sheet_name is None and "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    if sheet_name is None:
+        sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 
@@ -1066,8 +1065,8 @@ def add_borders(
 ) -> dict:
     """Add borders to cells. edges: all, outer, top, bottom, left, right, inner_horizontal, inner_vertical."""
     service = _get_service()
-    if sheet_name is None and "!" in range_str:
-        sheet_name = range_str.split("!")[0].strip("'")
+    if sheet_name is None:
+        sheet_name = extract_sheet_name(range_str)
     sheet_id, _ = resolve_sheet_id(service, spreadsheet_id, sheet_name)
     grid_range = parse_a1_range(range_str, sheet_id)
 

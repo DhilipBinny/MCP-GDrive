@@ -8,14 +8,22 @@ from shared.auth import get_credentials
 from shared.utils import execute_with_retry, batch_update as _batch_update, hex_to_rgb, utf16_len
 
 _service = None
+_service_creds = None
 
 
 def _get_service():
-    global _service
-    if _service is None:
-        creds = get_credentials()
+    global _service, _service_creds
+    creds = get_credentials()
+    if _service is None or creds is not _service_creds:
         _service = build("docs", "v1", credentials=creds)
+        _service_creds = creds
     return _service
+
+
+def _get_body(doc: dict) -> dict:
+    """Extract the body from a Docs API response, handling tab-aware format."""
+    tabs = doc.get("tabs", [])
+    return tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
 
 
 def create_document(title: str) -> dict:
@@ -31,13 +39,10 @@ def read_document(document_id: str, as_markdown: bool = False) -> dict:
     )
     title = doc.get("title", "")
 
-    tabs = doc.get("tabs", [])
-    if tabs:
-        body = tabs[0].get("documentTab", {}).get("body", {})
-    else:
-        body = doc.get("body", {})
+    body = _get_body(doc)
 
     if as_markdown:
+        tabs = doc.get("tabs", [])
         doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
         lists = doc_tab.get("lists", {})
         text = _body_to_markdown(body, lists=lists)
@@ -83,11 +88,7 @@ def get_end_index(document_id: str) -> int:
     doc = execute_with_retry(
         service.documents().get(documentId=document_id, includeTabsContent=True)
     )
-    tabs = doc.get("tabs", [])
-    if tabs:
-        body = tabs[0].get("documentTab", {}).get("body", {})
-    else:
-        body = doc.get("body", {})
+    body = _get_body(doc)
     content = body.get("content", [])
     if content:
         return content[-1].get("endIndex", 1)
@@ -307,8 +308,7 @@ def get_section_boundaries(
             Applies after parent_heading filtering if both are provided.
     """
     doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    body = _get_body(doc)
     content = body.get("content", [])
 
     heading_styles = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3,
@@ -333,8 +333,7 @@ def get_section_boundaries(
 def find_tables(document_id: str) -> list[dict]:
     """Return all tables in the document with their indices and content."""
     doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    body = _get_body(doc)
 
     tables = []
     for elem in body.get("content", []):
@@ -472,8 +471,7 @@ def style_table(
 ) -> dict:
     """Style a table with header formatting, borders, alternating row colors, and column widths."""
     doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    body = _get_body(doc)
 
     table_count = 0
     target_table = None
@@ -563,6 +561,7 @@ def style_table(
         if any(w <= 0 for w in column_widths):
             raise ValueError("All column_widths values must be positive")
         tab_style = {}
+        tabs = doc.get("tabs", [])
         if tabs:
             tab_style = tabs[0].get("documentTab", {}).get("documentStyle", {})
         doc_style = tab_style or doc.get("documentStyle", {})
@@ -628,8 +627,7 @@ def set_text_color(document_id: str, text: str, color: str, scope: str = "all") 
         scope: "all" for all occurrences, "first" for first only
     """
     doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    body = _get_body(doc)
 
     all_hits = _find_text_in_body(body, text)
     if scope == "first" and all_hits:
@@ -662,8 +660,7 @@ def set_font(document_id: str, font_family: str, text: str | None = None, scope:
         scope: "all" for all occurrences, "first" for first only (only when text is provided)
     """
     doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
+    body = _get_body(doc)
 
     requests = []
 
@@ -701,9 +698,10 @@ def set_font(document_id: str, font_family: str, text: str | None = None, scope:
     return {"font_family": font_family, "applied_to": description}
 
 
-def _get_existing_header_footer_id(document_id: str, location: str) -> str | None:
+def _get_existing_header_footer_id(document_id: str, location: str, doc: dict | None = None) -> str | None:
     """Find the existing header or footer segment ID, if any."""
-    doc = read_document_raw(document_id)
+    if doc is None:
+        doc = read_document_raw(document_id)
     tabs = doc.get("tabs", [])
     doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
     ds = doc_tab.get("documentStyle", {}) or doc.get("documentStyle", {})
@@ -712,9 +710,10 @@ def _get_existing_header_footer_id(document_id: str, location: str) -> str | Non
     return ds.get("defaultFooterId") or None
 
 
-def _clear_segment_content(document_id: str, segment_id: str) -> None:
+def _clear_segment_content(document_id: str, segment_id: str, doc: dict | None = None) -> None:
     """Delete all content from a header/footer segment, leaving it empty."""
-    doc = read_document_raw(document_id)
+    if doc is None:
+        doc = read_document_raw(document_id)
     tabs = doc.get("tabs", [])
     doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
     sections = doc_tab.get("headers", {}) if segment_id.startswith("kix.") else {}
@@ -746,10 +745,11 @@ def add_header_footer(document_id: str, location: str, text: str, alignment: str
         alignment: Paragraph alignment — "left", "center", "right"
     """
     service = _get_service()
-    segment_id = _get_existing_header_footer_id(document_id, location)
+    doc = read_document_raw(document_id)
+    segment_id = _get_existing_header_footer_id(document_id, location, doc=doc)
 
     if segment_id:
-        _clear_segment_content(document_id, segment_id)
+        _clear_segment_content(document_id, segment_id, doc=doc)
     else:
         if location == "header":
             create_request = {"createHeader": {"type": "DEFAULT", "sectionBreakLocation": {"index": 0}}}
@@ -797,17 +797,29 @@ def read_section(
     occurrence: int = 1,
 ) -> dict | None:
     """Read content from a specific section only."""
-    boundaries = get_section_boundaries(
-        document_id, heading_text,
-        parent_heading=parent_heading, occurrence=occurrence,
+    doc = read_document_raw(document_id)
+    body = _get_body(doc)
+    content = body.get("content", [])
+
+    heading_styles = {"HEADING_1": 1, "HEADING_2": 2, "HEADING_3": 3,
+                      "HEADING_4": 4, "HEADING_5": 5, "HEADING_6": 6}
+
+    # Determine search range — optionally scoped to a parent heading's section
+    search_start = 0
+    search_end = float("inf")
+    if parent_heading:
+        parent_bounds = _find_section_in_content(content, heading_styles, parent_heading)
+        if not parent_bounds:
+            return None
+        search_start = parent_bounds["content_start"]
+        search_end = parent_bounds["content_end"]
+
+    boundaries = _find_section_in_content(
+        content, heading_styles, heading_text,
+        search_start=search_start, search_end=search_end, occurrence=occurrence,
     )
     if not boundaries:
         return None
-
-    doc = read_document_raw(document_id)
-    tabs = doc.get("tabs", [])
-    body = tabs[0].get("documentTab", {}).get("body", {}) if tabs else doc.get("body", {})
-    content = body.get("content", [])
 
     section_elements = []
     for elem in content:
@@ -818,6 +830,7 @@ def read_section(
 
     section_body = {"content": section_elements}
     if as_markdown:
+        tabs = doc.get("tabs", [])
         doc_tab = tabs[0].get("documentTab", {}) if tabs else {}
         lists = doc_tab.get("lists", {})
         return {"content": _body_to_markdown(section_body, lists=lists), "boundaries": boundaries}

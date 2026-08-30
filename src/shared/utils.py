@@ -122,6 +122,13 @@ def estimate_text_height_pt(text: str, font_pt: float) -> float:
     return num_lines * font_pt * 1.4
 
 
+def extract_sheet_name(range_str: str) -> str | None:
+    """Extract sheet name from A1 notation (e.g. "'Q2 Data'!A1" -> "Q2 Data")."""
+    if "!" in range_str:
+        return range_str.split("!")[0].strip("'")
+    return None
+
+
 def col_to_index(col: str) -> int:
     """Convert column letter to 0-based index: A->0, Z->25, AA->26."""
     result = 0
