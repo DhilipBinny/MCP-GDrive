@@ -6,7 +6,11 @@ import uuid
 from googleapiclient.discovery import build
 
 from shared.auth import get_credentials
-from shared.utils import execute_with_retry
+from shared.utils import execute_with_retry, hex_to_rgb, estimate_text_width_pt
+from .design import (
+    CANVAS_H, CANVAS_W, CONTENT, DEFAULT_PALETTE, EMU_PER_PT,
+    FONTS, FONT_SIZES, GUTTER, LAYOUT, LINE_SPACING, PALETTES, get_palette,
+)
 
 _service = None
 _service_creds = None
@@ -40,7 +44,6 @@ def _emu_transform(x: int, y: int) -> dict:
 
 
 def set_deck_theme(presentation_id: str, theme: str) -> dict:
-    from .design import PALETTES
     if theme not in PALETTES:
         raise ValueError(f"Unknown theme: {theme}. Available: {list(PALETTES.keys())}")
     _deck_themes[presentation_id] = theme
@@ -48,7 +51,6 @@ def set_deck_theme(presentation_id: str, theme: str) -> dict:
 
 
 def get_deck_theme(presentation_id: str) -> str:
-    from .design import DEFAULT_PALETTE
     return _deck_themes.get(presentation_id, DEFAULT_PALETTE)
 
 
@@ -58,7 +60,6 @@ def set_deck_footer(presentation_id: str, footer: str) -> dict:
 
 
 def _resolve_theme(presentation_id: str, theme: str | None) -> str:
-    from .design import DEFAULT_PALETTE
     if theme is not None:
         return theme
     return _deck_themes.get(presentation_id, DEFAULT_PALETTE)
@@ -67,8 +68,7 @@ def _resolve_theme(presentation_id: str, theme: str | None) -> str:
 
 def _footer_line_reqs(slide_id: str, pal: dict) -> list[dict]:
     """Thin horizontal divider line above the footer area."""
-    from .design import LAYOUT
-    from shared.utils import hex_to_rgb
+
     lid = _new_id()
     x = LAYOUT["content"]["title"]["x"]
     w = LAYOUT["content"]["title"]["w"]
@@ -94,7 +94,6 @@ def _footer_line_reqs(slide_id: str, pal: dict) -> list[dict]:
 
 
 def _page_number_reqs(slide_id: str, pal: dict, number: int) -> list[dict]:
-    from .design import LAYOUT, FONTS, FONT_SIZES
     pn = LAYOUT["page_number"]
     sid = _new_id()
     return _text_box_reqs(sid, slide_id, str(number), pn,
@@ -106,7 +105,6 @@ def _footer_reqs(slide_id: str, pal: dict, presentation_id: str) -> list[dict]:
     footer = _deck_footers.get(presentation_id, "")
     if not footer:
         return []
-    from .design import LAYOUT, FONTS, FONT_SIZES
     fid = _new_id()
     return _text_box_reqs(fid, slide_id, footer, LAYOUT["footer"],
         font=FONTS["body"], size=FONT_SIZES["page_number"],
@@ -266,8 +264,7 @@ def add_slide(
     speaker_notes: str = "",
     theme: str | None = None,
 ) -> dict:
-    from .design import FONTS, FONT_SIZES, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -363,8 +360,7 @@ def add_image_slide(
     as_background: bool = False,
     theme: str | None = None,
 ) -> dict:
-    from .design import FONTS, FONT_SIZES, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -411,7 +407,6 @@ def add_image_slide(
             }
         })
     else:
-        from .design import CONTENT
         pos = CONTENT
         requests.append({
             "createImage": {
@@ -540,8 +535,7 @@ def import_drawio(
     Uses BLANK layout + custom title text box for consistent positioning
     and maximum diagram space (no fixed-height TITLE placeholder).
     """
-    from .design import LAYOUT, FONTS, FONT_SIZES
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     slide_id = _new_id()
     title_id = _new_id()
@@ -608,7 +602,6 @@ def import_drawio(
 
 
 def _resolve_palette(presentation_id: str) -> dict:
-    from .design import get_palette
     return get_palette(_resolve_theme(presentation_id, None))
 
 
@@ -669,7 +662,7 @@ def _text_box_reqs(
     line_spacing: float = 140, space_below: float = 0,
 ) -> list[dict]:
     """Helper: create a text box with styled text at a layout position."""
-    from shared.utils import hex_to_rgb
+
     reqs = [
         {"createShape": {
             "objectId": sid, "shapeType": "TEXT_BOX",
@@ -713,7 +706,7 @@ def _text_box_reqs(
 
 def _set_bg_reqs(slide_id: str, pal: dict) -> list[dict]:
     """Set slide background from palette (only emits a request if non-white)."""
-    from shared.utils import hex_to_rgb
+
     bg = pal.get("background", "#FFFFFF")
     if bg.upper() in ("#FFFFFF", "#FFF"):
         return []
@@ -734,8 +727,7 @@ def add_title_slide(
     bg_color: str | None = None,
 ) -> dict:
     """Create a title slide. All styling optional — defaults from theme."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -785,8 +777,7 @@ def add_section_slide(
     theme: str | None = None,
 ) -> dict:
     """Create a section divider slide with accent background."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, CANVAS_W, CANVAS_H, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -849,8 +840,7 @@ def add_content_slide(
     line_spacing: float | None = None, bg_color: str | None = None,
 ) -> dict:
     """Create a content slide. All styling is optional — defaults from theme."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, LINE_SPACING, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -910,7 +900,6 @@ def add_two_column_slide(
     col1_title: str = "", col2_title: str = "", theme: str | None = None,
 ) -> dict:
     """Create a two-column content slide."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, GUTTER, get_palette
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -968,7 +957,6 @@ def add_image_text_slide(
     image_side: str = "left", theme: str | None = None,
 ) -> dict:
     """Create an image + text slide (image left or right)."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1014,8 +1002,7 @@ def add_quote_slide(
     theme: str | None = None,
 ) -> dict:
     """Create a quote slide with accent bar."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1069,8 +1056,7 @@ def add_metrics_slide(
     theme: str | None = None,
 ) -> dict:
     """Create a big-numbers metrics slide. metrics: [{"value": "98%", "label": "Uptime"}, ...]"""
-    from .design import LAYOUT, FONTS, FONT_SIZES, CONTENT, GUTTER, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1118,8 +1104,7 @@ def add_styled_table_slide(
     rows: list[list[str]], theme: str | None = None,
 ) -> dict:
     """Create a table slide with professional styling: colored header, alternating rows, borders."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1261,7 +1246,6 @@ def add_chart_slide(
     title: str = "", linked: bool = True, theme: str | None = None,
 ) -> dict:
     """Embed a Sheets chart onto a slide."""
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     slide_id = _new_id()
@@ -1303,7 +1287,7 @@ def set_slide_background(
     color: str | None = None, image_url: str | None = None,
 ) -> dict:
     """Set slide background to a solid color or image."""
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
 
     if color:
@@ -1435,8 +1419,7 @@ def add_code_slide(
 
     code_style: "dark" (VS Code), "terminal" (GitHub dark), "light" (GitHub light), "notebook" (Jupyter)
     """
-    from .design import LAYOUT, FONTS, FONT_SIZES, get_palette
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     cs = CODE_STYLES.get(code_style, CODE_STYLES["dark"])
@@ -1540,7 +1523,7 @@ def update_text_style(
     end_index: int | None = None,
 ) -> dict:
     """Update text style on an existing element (shape, text box, table cell)."""
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     style: dict = {}
     fields = []
@@ -1592,7 +1575,7 @@ def style_existing_table(
     font_family: str | None = None,
 ) -> dict:
     """Apply professional styling to an existing table."""
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
 
     # Read the table to get dimensions
@@ -1737,7 +1720,6 @@ def normalize_fonts(
 
 def audit_styles(presentation_id: str) -> dict:
     """Analyze a deck and report style + layout inconsistencies for LLM-driven fixes."""
-    from shared.utils import estimate_text_width_pt
     service = _get_service()
     pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
 
@@ -1757,7 +1739,6 @@ def audit_styles(presentation_id: str) -> dict:
     page_num_slides = set()
     footer_slides = set()
 
-    from .design import CANVAS_W, CANVAS_H, CONTENT, EMU_PER_PT
     SHAPE_INSET_EMU = int(0.05 * EMU_PER_INCH)
     TITLE_Y_THRESHOLD = CANVAS_H * 0.40
 
@@ -2008,7 +1989,6 @@ def audit_styles(presentation_id: str) -> dict:
 
 def add_page_numbers(presentation_id: str, theme: str | None = None) -> dict:
     """Add page numbers to all slides (skips slides with colored backgrounds)."""
-    from .design import get_palette
     service = _get_service()
     pal = get_palette(_resolve_theme(presentation_id, theme))
     pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
@@ -2067,7 +2047,6 @@ def align_elements(
       "distribute_h" — equal horizontal spacing
       "distribute_v" — equal vertical spacing
     """
-    from .design import CANVAS_H, CANVAS_W
     service = _get_service()
     pres = execute_with_retry(service.presentations().get(presentationId=presentation_id))
 
@@ -2077,7 +2056,7 @@ def align_elements(
             slide = s
             break
     if not slide:
-        return {"error": f"Slide {slide_id} not found"}
+        raise ValueError(f"Slide {slide_id} not found")
 
     elements = []
     for elem in slide.get("pageElements", []):
@@ -2302,8 +2281,8 @@ def get_image_url(presentation_id: str, element_id: str) -> dict:
                 result["content_url"] = fill["contentUrl"]
                 result["content_url_note"] = "Temporary (30 min). Re-host for permanence."
                 return result
-            return {"error": f"Element {element_id} is not an image"}
-    return {"error": f"Element {element_id} not found"}
+            raise ValueError(f"Element {element_id} is not an image")
+    raise ValueError(f"Element {element_id} not found")
 
 
 def _read_element(pres: dict, element_id: str) -> dict | None:
@@ -2319,7 +2298,7 @@ def _recreate_element(
     elem: dict, slide_id: str, offset_x: int = 0, offset_y: int = 0,
 ) -> list[dict]:
     """Build API requests to recreate a PageElement on a target slide."""
-    from shared.utils import hex_to_rgb
+
     reqs: list[dict] = []
     new_id = _new_id()
     t = elem.get("transform", {})
@@ -2509,7 +2488,7 @@ def clone_slide(
             source_slide = slide
             break
     if not source_slide:
-        return {"error": f"Slide {source_slide_id} not found in source presentation"}
+        raise ValueError(f"Slide {source_slide_id} not found in source presentation")
 
     new_slide_id = _new_id()
     create_reqs: list[dict] = [{"createSlide": {
@@ -2560,7 +2539,7 @@ def copy_element(
     source_pres = execute_with_retry(service.presentations().get(presentationId=source_presentation_id))
     elem = _read_element(source_pres, element_id)
     if not elem:
-        return {"error": f"Element {element_id} not found"}
+        raise ValueError(f"Element {element_id} not found")
 
     offset_x = 0
     offset_y = 0
@@ -2573,7 +2552,7 @@ def copy_element(
 
     reqs = _recreate_element(elem, target_slide_id, offset_x, offset_y)
     if not reqs:
-        return {"error": f"Element {element_id} type not supported for copy"}
+        raise ValueError(f"Element {element_id} type not supported for copy")
 
     execute_with_retry(service.presentations().batchUpdate(
         presentationId=target_presentation_id, body={"requests": reqs}))
@@ -2585,7 +2564,7 @@ def add_hyperlink(
     start_index: int | None = None, end_index: int | None = None,
 ) -> dict:
     """Add a hyperlink to text in an existing element."""
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     text_range = {"type": "ALL"}
     if start_index is not None and end_index is not None:
@@ -2706,7 +2685,7 @@ def update_shape_fill(
     outline_weight: float | None = None,
 ) -> dict:
     """Change fill color and/or outline on an existing shape."""
-    from shared.utils import hex_to_rgb
+
     service = _get_service()
     props: dict = {}
     fields = []
@@ -2748,7 +2727,6 @@ def apply_brand_kit(
     audit = audit_styles(presentation_id)
     for t in audit["tables"]:
         if not t["has_styled_header"]:
-            from shared.utils import hex_to_rgb
             style_existing_table(
                 presentation_id, t["object_id"],
                 header_bg=accent_color, header_text_color="#FFFFFF",
@@ -2879,7 +2857,6 @@ def create_video(
 
     Centers the video on the slide at 60% of canvas width.
     """
-    from .design import CANVAS_W, CANVAS_H
 
     service = _get_service()
 
