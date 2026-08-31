@@ -45,13 +45,13 @@ WORKFLOW FOR CREATING DOCUMENTS:
 1. gdocs_create — create new blank doc (optionally in a folder)
 2. gdocs_write(action="write_markdown") — write full content with Markdown formatting
 3. gdocs_edit(action="cleanup") — fix formatting issues
-4. gdocs_edit(action="audit") — verify quality
+4. gdocs_read(action="audit") — verify quality
 
 WORKFLOW FOR EDITING EXISTING DOCS:
 1. gdocs_read(action="structure") — see document outline with headings
 2. gdocs_read(action="section", heading_text="...") — read specific sections
 3. gdocs_write — insert, append, replace, or delete content
-4. gdocs_edit — highlight, cleanup, audit, adjust page setup, or edit tables
+4. gdocs_edit — highlight, cleanup, adjust page setup, or edit tables
 
 MARKDOWN FORMATTING RULES:
 - Headings: # through ###### (H1-H6)
@@ -106,7 +106,7 @@ def _handle_errors(func):
 def gdocs_create(title: str, folder_id: str | None = None) -> str:
     """Create a new Google Doc. Optionally place it in a specific Drive folder.
 
-    WORKFLOW: create -> write_markdown -> edit(cleanup/audit).
+    WORKFLOW: create -> write_markdown -> edit(cleanup) -> read(audit).
 
     Args:
         title: Document title
@@ -142,6 +142,7 @@ def gdocs_read(
     - "full" — read the entire document (uses: format)
     - "section" — read a specific section by heading (uses: heading_text, format, parent_heading, occurrence)
     - "structure" — document outline with headings, tables, and index ranges
+    - "audit" — generate a quality report: paragraph count, table count, heading structure, font consistency, issues
 
     Args:
         document_id: The Google Doc ID
@@ -184,8 +185,23 @@ def gdocs_read(
                     parts.append(f"- [TABLE {elem['rows']}x{elem['columns']}] ({elem['startIndex']}-{elem['endIndex']})")
         return "\n".join(parts)
 
+    elif a == "audit":
+        result = formatter.audit_document(document_id)
+        parts = [
+            f"# Audit: {result['document_id']}",
+            f"- Paragraphs: {result['total_paragraphs']}",
+            f"- Tables: {result['total_tables']}",
+            f"- Headings: H1={result['headings']['HEADING_1']}, H2={result['headings']['HEADING_2']}, H3={result['headings']['HEADING_3']}",
+            f"- Fonts: {', '.join(result['fonts_used']) or 'default only'}",
+            "",
+            "## Issues",
+        ]
+        for issue in result["issues"]:
+            parts.append(f"- {issue}")
+        return "\n".join(parts)
+
     else:
-        return f"ERROR: Unknown action '{action}'. Use: full, section, structure"
+        return f"ERROR: Unknown action '{action}'. Use: full, section, structure, audit"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -600,10 +616,10 @@ def gdocs_edit(
     border_width_pt: float | None = None,
     column_widths: list[int] | None = None,
 ) -> str:
-    """Edit formatting, audit quality, or modify tables in a Google Doc. The `action` parameter selects the operation.
+    """Edit formatting or modify tables in a Google Doc. The `action` parameter selects the operation.
 
     GUIDELINES:
-    - Run "audit" first to understand the document's formatting state
+    - Use gdocs_read(action="audit") to understand the document's formatting state
     - Use "cleanup" to auto-fix common formatting issues
     - Use "highlight" to mark text for review or emphasis
     - Use "text_color" to change text foreground color (hex color codes)
@@ -620,7 +636,6 @@ def gdocs_edit(
     - "add_header" — create or update document header (uses: text, alignment). Idempotent — replaces existing content.
     - "add_footer" — create or update document footer (uses: text, alignment). Idempotent — replaces existing content. Note: page number fields are not supported by the Google Docs API — use text like "Page X" as literal placeholder.
     - "cleanup" — auto-fix formatting issues: duplicate blank lines, heading style leaks, bold inheritance, table font sizes
-    - "audit" — generate a quality report: paragraph count, table count, heading structure, font consistency, issues
     - "page_setup" — update document margins (uses: margin_top, margin_bottom, margin_left, margin_right — values in points)
     - "delete_table_row" — delete a row from a table (uses: table_index, row_index)
     - "update_table_cell" — update text in a specific table cell (uses: table_index, row_index, col, text)
@@ -691,21 +706,6 @@ def gdocs_edit(
         details = result.get("details", [])
         summary = ", ".join(details) if details else "nothing to fix"
         return f"Fixed {result['issues_fixed']} issue(s): {summary}"
-
-    elif a == "audit":
-        result = formatter.audit_document(document_id)
-        parts = [
-            f"# Audit: {result['document_id']}",
-            f"- Paragraphs: {result['total_paragraphs']}",
-            f"- Tables: {result['total_tables']}",
-            f"- Headings: H1={result['headings']['HEADING_1']}, H2={result['headings']['HEADING_2']}, H3={result['headings']['HEADING_3']}",
-            f"- Fonts: {', '.join(result['fonts_used']) or 'default only'}",
-            "",
-            "## Issues",
-        ]
-        for issue in result["issues"]:
-            parts.append(f"- {issue}")
-        return "\n".join(parts)
 
     elif a == "page_setup":
         result = docs_service.update_document_style(
@@ -782,7 +782,7 @@ def gdocs_edit(
         return f"Styled table {table_index}: {', '.join(result['applied'])}"
 
     else:
-        return f"ERROR: Unknown action '{action}'. Use: highlight, text_color, set_font, add_header, add_footer, cleanup, audit, page_setup, delete_table_row, update_table_cell, style_table"
+        return f"ERROR: Unknown action '{action}'. Use: highlight, text_color, set_font, add_header, add_footer, cleanup, page_setup, delete_table_row, update_table_cell, style_table"
 
 
 # ═══════════════════════════════════════════════════════════════
