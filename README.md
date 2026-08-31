@@ -1,6 +1,6 @@
 # MCP-GDrive
 
-**Three MCP servers for Google Docs, Sheets, and Slides — 26 tools, 85+ actions for Claude Code.**
+**Three MCP servers for Google Docs, Sheets, and Slides — 26 tools, 110+ actions for Claude Code.**
 
 [![License](https://img.shields.io/github/license/DhilipBinny/MCP-GDrive)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue)](https://python.org)
@@ -36,18 +36,18 @@ Each server uses **action-based dispatch** — fewer tools, same capability, les
 |------|---------|-------------|
 | `gdocs_create` | — | Create a new doc |
 | `gdocs_read` | full, section, structure | Read content, specific sections, or document outline |
-| `gdocs_write` | write_markdown, append_markdown, insert_at_section, replace, delete_section, add_heading, add_table, insert_image | All content writing operations |
-| `gdocs_edit` | highlight, cleanup, audit, page_setup, delete_table_row, update_table_cell | Formatting, quality checks, table edits |
+| `gdocs_write` | write_markdown, append_markdown, insert_at_section, replace, delete_section, add_heading, add_table, add_table_row, delete_table, insert_image, insert_page_break | All content writing operations |
+| `gdocs_edit` | highlight, text_color, set_font, add_header, add_footer, cleanup, audit, page_setup, style_table, delete_table_row, update_table_cell | Formatting, text styling, headers/footers, table edits |
 
 ### Google Sheets — 5 tools + 3 Drive
 
 | Tool | Actions | What it does |
 |------|---------|-------------|
 | `gsheets_create` | — | Create a spreadsheet |
-| `gsheets_read` | read, info, find | Read data, metadata + chart IDs, search cells |
-| `gsheets_write` | write, append, clear | Write, append rows, clear ranges |
-| `gsheets_format` | style, borders, merge, unmerge, conditional_format, data_validation | Formatting with vertical alignment and wrap strategy |
-| `gsheets_manage` | add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, auto_resize, sort, add_chart, delete_chart | Tab management, column auto-sizing, chart placement |
+| `gsheets_read` | read, info, find, read_format, list_conditional_formats | Read data, metadata, search cells, inspect formatting |
+| `gsheets_write` | write, append, clear | Write, append rows, clear ranges. date_format parameter for date display |
+| `gsheets_format` | style, borders, merge, unmerge, conditional_format, delete_conditional_format, data_validation | Formatting with vertical alignment and wrap strategy |
+| `gsheets_manage` | add_sheet, delete_sheet, rename_sheet, duplicate_sheet, freeze, auto_resize, sort, add_chart, delete_chart, insert_rows, delete_rows, insert_columns, delete_columns | Tab management, column auto-sizing, charts, row/column operations |
 
 ### Google Slides — 8 tools + 3 Drive
 
@@ -55,9 +55,9 @@ Each server uses **action-based dispatch** — fewer tools, same capability, les
 |------|---------|-------------|
 | `gslides_create` | — | Create a presentation |
 | `gslides_read` | — | Read all slides with element IDs |
-| `gslides_add_slide` | title, section, content, table, metrics, quote, code, two_column, image_text, chart, image, from_layout | 12 slide types. Code blocks: dark/terminal/light/notebook styles |
+| `gslides_add_slide` | title, section, content, table, metrics, quote, code, two_column, image_text, chart, image, blank, from_layout | 13 slide types. Code blocks: dark/terminal/light/notebook styles |
 | `gslides_edit` | text_style, shape_fill, table_style, normalize_fonts, brand_kit, hyperlink, move_resize, background | Edit existing elements, enforce brand consistency |
-| `gslides_manage` | 25+ actions | Slides: delete, duplicate, reorder, clone_slide (cross-deck). Elements: copy_element, align, get_image_url. Templates, page numbers, thumbnails, table ops |
+| `gslides_manage` | 27 actions | Slides: delete, duplicate, reorder, clone_slide (cross-deck). Elements: copy_element, align, get_image_url. Templates, page numbers, thumbnails, table ops, video embedding |
 | `gslides_analyze` | audit, recommend | Style audit with overflow detection, alignment checks, title consistency. Color palette recommendations with 60/30/10 guidance |
 | `gslides_import` | markdown, drawio | Import from Markdown or draw.io XML with auto-scaling text fitting |
 | `gslides_search_shapes` | — | 58 curated shapes for draw.io diagrams |
@@ -103,6 +103,22 @@ gslides_analyze(presentation_id) -> gslides_edit(action="brand_kit", accent_colo
 Built-in 60/30/10 color rule with mood-to-color mapping and WCAG contrast requirements. Four themes: modern, corporate, dark, warm.
 ```
 gslides_analyze(content_type="content", audience="business")
+```
+
+### Text Formatting
+Change font color, font family, and add document headers/footers with alignment control.
+```
+gdocs_edit(action="text_color", text="Important", color="#811a1b")
+gdocs_edit(action="set_font", font_family="Georgia")
+gdocs_edit(action="add_header", text="Confidential", alignment="right")
+gdocs_edit(action="add_footer", text="Page 1", alignment="center")
+```
+
+### Section Targeting
+Disambiguate repeated heading names using `parent_heading` and `occurrence` parameters. Works across read, write, and edit operations.
+```
+gdocs_read(action="section", heading_text="Change History", parent_heading="Server B")
+gdocs_write(action="insert_page_break", before_heading="CPU", occurrence=2)
 ```
 
 ### Template Support
