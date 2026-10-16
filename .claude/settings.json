@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push * --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(rm -rf /*)",
+      "Bash(git commit*--no-verify*)",
+      "Bash(git commit*-n *)",
+      "Edit(.env)",
+      "Edit(.env.*)",
+      "Write(.env)",
+      "Write(.env.*)"
+    ]
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".githooks/validate-commit.sh"
+          },
+          {
+            "type": "command",
+            "command": ".githooks/gitleaks-check.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
