@@ -9,8 +9,11 @@ wheels/
 # Virtual environments
 .venv/
 
-# Claude Code local settings
-.claude/
+# Claude Code — commit settings.json and hooks, keep rules local
+.claude/settings.local.json
+.claude/worktrees/
+.claude/skills/
+.claude/rules/
 
 # IDE
 .vscode/
