@@ -287,9 +287,13 @@ def _find_client_secret() -> Path:
     for path in FALLBACK_CLIENT_SECRETS:
         if path.exists():
             return path
+    primary_path = BASE_CONFIG_DIR / "client_secret.json"
+    profile_note = ""
+    if ACTIVE_PROFILE:
+        profile_note = f"\n  (or per-profile: {CLIENT_SECRET_PATH})"
     raise FileNotFoundError(
         "No client_secret.json found. Place your OAuth client secret at:\n"
-        f"  {CLIENT_SECRET_PATH}\n\n"
+        f"  {primary_path}{profile_note}\n\n"
         "Or download one from Google Cloud Console:\n"
         "  APIs & Services → Credentials → OAuth 2.0 Client IDs → Download JSON"
     )
@@ -327,10 +331,14 @@ def run_whoami() -> None:
 
     from shared.utils import execute_with_retry
 
-    service = build("drive", "v3", credentials=creds)
-    about = execute_with_retry(
-        service.about().get(fields="user(emailAddress,displayName)")
-    )
+    try:
+        service = build("drive", "v3", credentials=creds)
+        about = execute_with_retry(
+            service.about().get(fields="user(emailAddress,displayName)")
+        )
+    except Exception as e:
+        print(f"Failed to query Google account: {e}", file=sys.stderr)
+        sys.exit(1)
     user = about.get("user", {})
     email = user.get("emailAddress", "unknown")
     name = user.get("displayName", "")
@@ -370,14 +378,19 @@ def apply_profile_override(profile: str | None) -> None:
 
     Must be called before any credential access (i.e., at the top of main()).
     """
-    global ACTIVE_PROFILE, CONFIG_DIR, TOKEN_PATH, CLIENT_SECRET_PATH
+    global ACTIVE_PROFILE, BASE_CONFIG_DIR, CONFIG_DIR, TOKEN_PATH, CLIENT_SECRET_PATH
     global KEYRING_USERNAME, FALLBACK_CLIENT_SECRETS
+    global _cached_creds, _auth_mode
+
+    _cached_creds = None
+    _auth_mode = None
 
     if profile is not None:
         profile = validate_profile_name(profile)
         os.environ["GOOGLE_WORKSPACE_MCP_PROFILE"] = profile
 
     resolved = profile or _get_active_profile()
+    BASE_CONFIG_DIR = _get_base_config_dir()
     ACTIVE_PROFILE = resolved
     CONFIG_DIR = _get_config_dir(resolved)
     TOKEN_PATH = CONFIG_DIR / "token.json"
