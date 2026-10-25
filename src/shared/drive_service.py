@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import mimetypes
 import re
 from pathlib import Path
@@ -255,6 +254,87 @@ def upload_file(
     }
 
 
+GOOGLE_WORKSPACE_MIMES = {
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+    "application/vnd.google-apps.drawing",
+    "application/vnd.google-apps.form",
+    "application/vnd.google-apps.site",
+}
+
+
+def download_file(file_id: str, output_path: str | None = None) -> dict:
+    """Download a non-Google-Workspace file from Drive.
+
+    Streams directly to disk — no full-file memory buffer.
+    Use export_file for Docs/Sheets/Slides.
+    """
+    import hashlib
+
+    service = _get_service()
+    meta = execute_with_retry(
+        service.files().get(fileId=file_id, fields="id,name,mimeType,size,md5Checksum")
+    )
+
+    if meta["mimeType"] in GOOGLE_WORKSPACE_MIMES:
+        raise ValueError(
+            f"Cannot download Google Workspace file '{meta['name']}' ({meta['mimeType']}). "
+            "Use action='export' with a format (pdf, docx, etc.) instead."
+        )
+
+    if "size" not in meta:
+        raise ValueError(
+            f"Cannot determine file size for '{meta['name']}'. "
+            "File may be a shortcut or unsupported type."
+        )
+
+    if not output_path:
+        stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', Path(meta["name"]).stem)
+        ext = Path(meta["name"]).suffix or _guess_extension(meta["mimeType"])
+        output_path = f"{stem}{ext}"
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    request = service.files().get_media(fileId=file_id)
+    md5_hash = hashlib.md5()
+    with open(out, "wb") as f:
+        downloader = MediaIoBaseDownload(f, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        # Compute MD5 from the written file in chunks (no full-file memory load)
+        f.seek(0)
+
+    expected_md5 = meta.get("md5Checksum")
+    if expected_md5:
+        with open(out, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                md5_hash.update(chunk)
+
+    actual_size = out.stat().st_size
+    result: dict = {
+        "path": str(out.resolve()),
+        "name": meta["name"],
+        "mime_type": meta["mimeType"],
+        "size": actual_size,
+    }
+    if expected_md5:
+        actual_md5 = md5_hash.hexdigest()
+        result["md5_match"] = actual_md5 == expected_md5
+        if not result["md5_match"]:
+            result["expected_md5"] = expected_md5
+            result["actual_md5"] = actual_md5
+    return result
+
+
+def _guess_extension(mime_type: str) -> str:
+    """Guess file extension from MIME type."""
+    ext = mimetypes.guess_extension(mime_type)
+    return ext or ""
+
+
 EXPORT_FORMATS = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -276,29 +356,31 @@ EXPORT_FORMATS = {
 
 
 def export_file(file_id: str, format: str, output_path: str | None = None) -> dict:
-    """Export a Google Workspace file to a local format. Max 10MB."""
+    """Export a Google Workspace file to a local format.
+
+    Google limits exports to 10 MB. Streams directly to disk.
+    """
     service = _get_service()
     mime_type = EXPORT_FORMATS.get(format.lower())
     if not mime_type:
         raise ValueError(f"Unknown format '{format}'. Supported: {', '.join(sorted(EXPORT_FORMATS))}")
-
-    request = service.files().export_media(fileId=file_id, mimeType=mime_type)
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
 
     if not output_path:
         file_info = execute_with_retry(service.files().get(fileId=file_id, fields="name"))
         stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', Path(file_info["name"]).stem)
         output_path = f"{stem}.{format.lower()}"
 
-    buffer.seek(0)
-    Path(output_path).write_bytes(buffer.read())
-    size = Path(output_path).stat().st_size
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-    return {"path": str(Path(output_path).resolve()), "format": format, "size": size}
+    request = service.files().export_media(fileId=file_id, mimeType=mime_type)
+    with open(out, "wb") as f:
+        downloader = MediaIoBaseDownload(f, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+    return {"path": str(out.resolve()), "format": format, "size": out.stat().st_size}
 
 
 def share_file(
