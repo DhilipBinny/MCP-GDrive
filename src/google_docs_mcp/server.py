@@ -860,6 +860,7 @@ def gdrive_ops(
     - "rename" — rename file (uses: file_id, name)
     - "copy" — copy file (uses: file_id, name, folder_id)
     - "upload" — upload local file (uses: local_path, folder_id, name)
+    - "download" — download file to local disk (uses: file_id, output_path). For images, audio, video, PDFs — not Google Docs/Sheets/Slides (use export for those)
     - "export" — export as PDF/DOCX/etc (uses: file_id, format, output_path)
     - "share" — share file (uses: file_id, email, role, anyone)
     - "info" — get file metadata (uses: file_id)
@@ -897,6 +898,12 @@ def gdrive_ops(
     elif a == "upload":
         r = drive_service.upload_file(local_path, name or None, folder_id or None)
         return f"Uploaded **{r['name']}** (`{r['id']}`)"
+    elif a == "download":
+        r = drive_service.download_file(file_id, output_path or None)
+        parts = [f"Downloaded **{r['name']}** -> `{r['path']}` ({r['size'] / 1024:.1f} KB)"]
+        if "md5_match" in r and not r["md5_match"]:
+            parts.append("WARNING: MD5 checksum mismatch — file may be corrupted")
+        return "\n".join(parts)
     elif a == "export":
         r = drive_service.export_file(file_id, format, output_path or None)
         return f"Exported -> **{r['path']}** ({r['size']/1024:.1f} KB)"
