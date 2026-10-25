@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import os
+import re
 from unittest import mock
 
 import pytest
 
 from shared.auth import (
+    _find_client_secret,
     _get_active_profile,
     _get_base_config_dir,
     _get_config_dir,
     _get_keyring_username,
+    _load_token_from_file,
+    apply_profile_override,
     parse_cli_args,
     validate_profile_name,
 )
@@ -234,3 +238,105 @@ class TestParseCliArgs:
         cmd, profile = parse_cli_args(["google-docs-mcp", "--verbose", "auth"])
         assert cmd == "auth"
         assert profile is None
+
+    def test_profile_at_end_no_value(self):
+        cmd, profile = parse_cli_args(["google-docs-mcp", "auth", "--profile"])
+        assert cmd == "auth"
+        assert profile is None
+
+    def test_double_commands_first_wins(self):
+        cmd, profile = parse_cli_args(["google-docs-mcp", "auth", "whoami"])
+        assert cmd == "auth"
+
+    def test_profile_equals_empty(self):
+        cmd, profile = parse_cli_args(["google-docs-mcp", "auth", "--profile="])
+        assert cmd == "auth"
+        assert profile == ""
+
+
+# ---------------------------------------------------------------------------
+# apply_profile_override
+# ---------------------------------------------------------------------------
+
+class TestApplyProfileOverride:
+    def test_override_updates_globals(self, tmp_path):
+        import shared.auth as auth_mod
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}):
+            apply_profile_override("test-proj")
+            assert auth_mod.ACTIVE_PROFILE == "test-proj"
+            assert tmp_path / "profiles" / "test-proj" == auth_mod.CONFIG_DIR
+            assert tmp_path / "profiles" / "test-proj" / "token.json" == auth_mod.TOKEN_PATH
+            assert auth_mod.KEYRING_USERNAME == "oauth-token:test-proj"
+
+    def test_override_clears_cached_creds(self, tmp_path):
+        import shared.auth as auth_mod
+        auth_mod._cached_creds = "stale"
+        auth_mod._auth_mode = "oauth"
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}):
+            apply_profile_override("fresh")
+            assert auth_mod._cached_creds is None
+            assert auth_mod._auth_mode is None
+
+    def test_override_invalid_profile_raises(self, tmp_path):
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}), pytest.raises(ValueError, match="Invalid profile name"):
+            apply_profile_override("../bad")
+
+    def test_override_none_with_env_var(self, tmp_path):
+        import shared.auth as auth_mod
+        with mock.patch.dict(os.environ, {
+            "GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path),
+            "GOOGLE_WORKSPACE_MCP_PROFILE": "from-env",
+        }):
+            apply_profile_override(None)
+            assert auth_mod.ACTIVE_PROFILE == "from-env"
+            assert auth_mod.KEYRING_USERNAME == "oauth-token:from-env"
+
+
+# ---------------------------------------------------------------------------
+# _find_client_secret fallback with profiles
+# ---------------------------------------------------------------------------
+
+class TestFindClientSecretFallback:
+    def test_profile_falls_back_to_root(self, tmp_path):
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}):
+            apply_profile_override("myproj")
+            # Place secret in root, not profile dir
+            root_secret = tmp_path / "client_secret.json"
+            root_secret.write_text('{"installed":{}}')
+            found = _find_client_secret()
+            assert found == root_secret
+
+    def test_profile_prefers_own_secret(self, tmp_path):
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}):
+            apply_profile_override("myproj")
+            # Place secret in both locations
+            root_secret = tmp_path / "client_secret.json"
+            root_secret.write_text('{"installed":{}}')
+            profile_secret = tmp_path / "profiles" / "myproj" / "client_secret.json"
+            profile_secret.write_text('{"installed":{}}')
+            found = _find_client_secret()
+            assert found == profile_secret
+
+    def test_no_secret_error_shows_root_path(self, tmp_path):
+        import shared.auth as auth_mod
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}):
+            apply_profile_override("myproj")
+            # Override legacy fallbacks to avoid finding real secrets on the filesystem
+            auth_mod.FALLBACK_CLIENT_SECRETS = [tmp_path / "client_secret.json"]
+            with pytest.raises(FileNotFoundError, match=re.escape(str(tmp_path / "client_secret.json"))):
+                _find_client_secret()
+
+
+# ---------------------------------------------------------------------------
+# _load_token_from_file with profile
+# ---------------------------------------------------------------------------
+
+class TestLoadTokenFromFileWithProfile:
+    def test_profile_skips_legacy_path(self, tmp_path):
+        import shared.auth as auth_mod
+        with mock.patch.dict(os.environ, {"GOOGLE_WORKSPACE_MCP_CONFIG_DIR": str(tmp_path)}):
+            apply_profile_override("isolated")
+            # ACTIVE_PROFILE is set, so legacy path should NOT be searched
+            assert auth_mod.ACTIVE_PROFILE == "isolated"
+            result = _load_token_from_file()
+            assert result is None
