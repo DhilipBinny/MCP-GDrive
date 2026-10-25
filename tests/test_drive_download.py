@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import contextlib
 from unittest import mock
 
 import pytest
 
 from shared.drive_service import (
     GOOGLE_WORKSPACE_MIMES,
-    MAX_DOWNLOAD_SIZE,
     _guess_extension,
     download_file,
 )
@@ -45,30 +43,11 @@ class TestDownloadFileValidation:
         with mock.patch("shared.drive_service._get_service", return_value=svc), pytest.raises(ValueError, match="Cannot download Google Workspace file"):
             download_file("abc")
 
-    def test_rejects_file_over_size_limit(self):
-        big_size = str(MAX_DOWNLOAD_SIZE + 1)
-        meta = {"id": "abc", "name": "huge.zip", "mimeType": "application/zip", "size": big_size}
+    def test_rejects_missing_size_field(self):
+        meta = {"id": "abc", "name": "shortcut", "mimeType": "application/vnd.google-apps.shortcut"}
         svc = self._mock_service(meta)
-        with mock.patch("shared.drive_service._get_service", return_value=svc), pytest.raises(ValueError, match="File too large"):
+        with mock.patch("shared.drive_service._get_service", return_value=svc), pytest.raises(ValueError, match="Cannot determine file size"):
             download_file("abc")
-
-    def test_file_at_limit_passes_size_check(self):
-        """File exactly at the limit should pass the size check (may fail later on write)."""
-        meta = {
-            "id": "abc", "name": "big.zip", "mimeType": "application/zip",
-            "size": str(MAX_DOWNLOAD_SIZE),
-        }
-        svc = self._mock_service(meta)
-        with (
-            mock.patch("shared.drive_service._get_service", return_value=svc),
-            mock.patch("shared.drive_service.MediaIoBaseDownload") as mock_dl,
-        ):
-            mock_instance = mock.MagicMock()
-            mock_instance.next_chunk.return_value = (mock.MagicMock(progress=lambda: 1.0), True)
-            mock_dl.return_value = mock_instance
-            # Size check passes — download proceeds (will hit an empty-buffer write error)
-            with contextlib.suppress(OSError, ValueError):
-                download_file("abc", "/tmp/test-download-limit-check.zip")
 
     def test_rejects_all_workspace_mime_types(self):
         for mime in GOOGLE_WORKSPACE_MIMES:
@@ -77,19 +56,102 @@ class TestDownloadFileValidation:
             with mock.patch("shared.drive_service._get_service", return_value=svc), pytest.raises(ValueError, match="Cannot download"):
                 download_file("abc")
 
-    def test_allows_regular_pdf(self):
-        """PDF is a regular file, not a Google Workspace file — should pass validation."""
+    def test_streams_regular_file_to_disk(self, tmp_path):
+        """PDF passes validation and streams to disk via MediaIoBaseDownload."""
         meta = {"id": "abc", "name": "report.pdf", "mimeType": "application/pdf", "size": "1000"}
         svc = self._mock_service(meta)
+        out_file = tmp_path / "report.pdf"
+
+        def fake_download(fh, request):
+            fh.write(b"fake-pdf-content")
+            instance = mock.MagicMock()
+            instance.next_chunk.return_value = (mock.MagicMock(), True)
+            return instance
+
         with (
             mock.patch("shared.drive_service._get_service", return_value=svc),
-            mock.patch("shared.drive_service.MediaIoBaseDownload") as mock_dl,
+            mock.patch("shared.drive_service.MediaIoBaseDownload", side_effect=fake_download),
         ):
-            mock_instance = mock.MagicMock()
-            mock_instance.next_chunk.return_value = (mock.MagicMock(progress=lambda: 1.0), True)
-            mock_dl.return_value = mock_instance
-            with contextlib.suppress(OSError, ValueError):
-                download_file("abc", "/tmp/test-download-pdf.pdf")
+            result = download_file("abc", str(out_file))
+            assert result["name"] == "report.pdf"
+            assert result["mime_type"] == "application/pdf"
+            assert out_file.exists()
+            assert out_file.read_bytes() == b"fake-pdf-content"
+            assert result["size"] == 16
+
+    def test_md5_match_on_correct_download(self, tmp_path):
+        """MD5 verification passes when checksum matches."""
+        import hashlib
+        content = b"hello-world-content"
+        expected_md5 = hashlib.md5(content).hexdigest()
+        meta = {
+            "id": "abc", "name": "data.bin", "mimeType": "application/octet-stream",
+            "size": str(len(content)), "md5Checksum": expected_md5,
+        }
+        svc = self._mock_service(meta)
+        out_file = tmp_path / "data.bin"
+
+        def fake_download(fh, request):
+            fh.write(content)
+            instance = mock.MagicMock()
+            instance.next_chunk.return_value = (mock.MagicMock(), True)
+            return instance
+
+        with (
+            mock.patch("shared.drive_service._get_service", return_value=svc),
+            mock.patch("shared.drive_service.MediaIoBaseDownload", side_effect=fake_download),
+        ):
+            result = download_file("abc", str(out_file))
+            assert result["md5_match"] is True
+            assert "expected_md5" not in result
+
+    def test_md5_mismatch_detected(self, tmp_path):
+        """MD5 verification reports mismatch when content differs from metadata checksum."""
+        meta = {
+            "id": "abc", "name": "data.bin", "mimeType": "application/octet-stream",
+            "size": "10", "md5Checksum": "0000000000000000deadbeef00000000",
+        }
+        svc = self._mock_service(meta)
+        out_file = tmp_path / "data.bin"
+
+        def fake_download(fh, request):
+            fh.write(b"wrong-data")
+            instance = mock.MagicMock()
+            instance.next_chunk.return_value = (mock.MagicMock(), True)
+            return instance
+
+        with (
+            mock.patch("shared.drive_service._get_service", return_value=svc),
+            mock.patch("shared.drive_service.MediaIoBaseDownload", side_effect=fake_download),
+        ):
+            result = download_file("abc", str(out_file))
+            assert result["md5_match"] is False
+            assert result["expected_md5"] == "0000000000000000deadbeef00000000"
+            assert "actual_md5" in result
+
+    def test_auto_names_from_drive_metadata(self, tmp_path):
+        """When no output_path, filename comes from Drive metadata."""
+        meta = {"id": "abc", "name": "photo.png", "mimeType": "image/png", "size": "500"}
+        svc = self._mock_service(meta)
+
+        def fake_download(fh, request):
+            fh.write(b"PNG")
+            instance = mock.MagicMock()
+            instance.next_chunk.return_value = (mock.MagicMock(), True)
+            return instance
+
+        import os
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            with (
+                mock.patch("shared.drive_service._get_service", return_value=svc),
+                mock.patch("shared.drive_service.MediaIoBaseDownload", side_effect=fake_download),
+            ):
+                result = download_file("abc")
+                assert "photo.png" in result["path"]
+        finally:
+            os.chdir(original_cwd)
 
 
 class TestGoogleWorkspaceMimes:
@@ -121,8 +183,3 @@ class TestGuessExtension:
     def test_jpeg(self):
         ext = _guess_extension("image/jpeg")
         assert ext in (".jpg", ".jpeg", ".jpe")
-
-
-class TestMaxDownloadSize:
-    def test_limit_is_100mb(self):
-        assert MAX_DOWNLOAD_SIZE == 100 * 1024 * 1024
