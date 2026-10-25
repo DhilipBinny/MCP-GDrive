@@ -789,11 +789,8 @@ def gdrive_ops(
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "auth":
-        from shared.auth import run_auth_flow
-        run_auth_flow()
-        return
-    mcp.run(transport="stdio")
+    from shared.auth import run_cli
+    run_cli(mcp)
 
 
 if __name__ == "__main__":
