@@ -168,6 +168,45 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 
 Token saved to OS keyring (macOS Keychain, Windows Credential Locker, Linux libsecret) with file fallback.
 
+### Named Profiles (multiple accounts)
+
+Use different Google accounts for different projects by setting a profile per MCP server:
+
+```json
+{
+  "mcpServers": {
+    "google-docs": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/DhilipBinny/MCP-GDrive", "google-docs-mcp"],
+      "env": { "GOOGLE_WORKSPACE_MCP_PROFILE": "work" }
+    }
+  }
+}
+```
+
+One-time auth per profile:
+
+```bash
+GOOGLE_WORKSPACE_MCP_PROFILE=work uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
+```
+
+Check which account is active:
+
+```bash
+google-docs-mcp whoami
+google-docs-mcp whoami --profile work
+```
+
+Each profile stores its token separately. The `client_secret.json` is shared — place it once in the root config dir.
+
+| What | Default (no profile) | With `--profile work` |
+|------|---------------------|----------------------|
+| Token file | `<config>/token.json` | `<config>/profiles/work/token.json` |
+| Keyring key | `oauth-token` | `oauth-token:work` |
+| Client secret | `<config>/client_secret.json` | Same (falls back to root) |
+
+No profile set = identical behavior to before. Existing installations are unaffected.
+
 ### Service Account (headless/team)
 
 ```bash
