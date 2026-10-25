@@ -255,6 +255,79 @@ def upload_file(
     }
 
 
+MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
+
+GOOGLE_WORKSPACE_MIMES = {
+    "application/vnd.google-apps.document",
+    "application/vnd.google-apps.spreadsheet",
+    "application/vnd.google-apps.presentation",
+    "application/vnd.google-apps.drawing",
+    "application/vnd.google-apps.form",
+    "application/vnd.google-apps.site",
+}
+
+
+def download_file(file_id: str, output_path: str | None = None) -> dict:
+    """Download a non-Google-Workspace file from Drive. Use export_file for Docs/Sheets/Slides."""
+    service = _get_service()
+    meta = execute_with_retry(
+        service.files().get(fileId=file_id, fields="id,name,mimeType,size,md5Checksum")
+    )
+
+    if meta["mimeType"] in GOOGLE_WORKSPACE_MIMES:
+        raise ValueError(
+            f"Cannot download Google Workspace file '{meta['name']}' ({meta['mimeType']}). "
+            "Use action='export' with a format (pdf, docx, etc.) instead."
+        )
+
+    file_size = int(meta.get("size", 0))
+    if file_size > MAX_DOWNLOAD_SIZE:
+        raise ValueError(
+            f"File too large: {file_size / 1024 / 1024:.1f} MB "
+            f"(limit: {MAX_DOWNLOAD_SIZE / 1024 / 1024:.0f} MB)"
+        )
+
+    request = service.files().get_media(fileId=file_id)
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    if not output_path:
+        stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', Path(meta["name"]).stem)
+        ext = Path(meta["name"]).suffix or _guess_extension(meta["mimeType"])
+        output_path = f"{stem}{ext}"
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    buffer.seek(0)
+    out.write_bytes(buffer.read())
+    actual_size = out.stat().st_size
+
+    result: dict = {
+        "path": str(out.resolve()),
+        "name": meta["name"],
+        "mime_type": meta["mimeType"],
+        "size": actual_size,
+    }
+    expected_md5 = meta.get("md5Checksum")
+    if expected_md5:
+        import hashlib
+        actual_md5 = hashlib.md5(out.read_bytes()).hexdigest()
+        result["md5_match"] = actual_md5 == expected_md5
+        if not result["md5_match"]:
+            result["expected_md5"] = expected_md5
+            result["actual_md5"] = actual_md5
+    return result
+
+
+def _guess_extension(mime_type: str) -> str:
+    """Guess file extension from MIME type."""
+    ext = mimetypes.guess_extension(mime_type)
+    return ext or ""
+
+
 EXPORT_FORMATS = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
