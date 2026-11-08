@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `auth --help` and `--help` print command help and do not start the Google OAuth flow
+- The OAuth callback listener accepts connections on both `127.0.0.1` and `::1` when IPv6 loopback can be bound, ignores requests that are not the OAuth redirect, and logs a same-process connect result before opening the browser
+
 ## [0.3.0] - 2025-07-15
 
 ### Added
