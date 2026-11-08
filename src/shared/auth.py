@@ -24,6 +24,8 @@ import logging
 import os
 import re
 import sys
+import urllib.parse
+import webbrowser
 from pathlib import Path
 
 from google.auth.exceptions import RefreshError
@@ -31,6 +33,8 @@ from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+
+from shared.oauth_loopback import LoopbackCallbackServer, diagnose_loopback
 
 SCOPES = [
     "https://www.googleapis.com/auth/documents",
@@ -75,6 +79,7 @@ def _get_base_config_dir() -> Path:
         return config
     try:
         from platformdirs import user_config_path
+
         return user_config_path(APP_NAME, ensure_exists=True)
     except ImportError:
         config = Path.home() / ".config" / APP_NAME
@@ -125,10 +130,12 @@ def _keyring_available() -> bool:
     """Check if a real keyring backend is available (not null/plaintext)."""
     try:
         import keyring
+
         backend = type(keyring.get_keyring()).__name__
         if "Null" in backend or "Fail" in backend or "PlainText" in backend:
             return False
         import platform
+
         return not (platform.system() == "Linux" and not os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
     except Exception:
         logger.debug("Keyring availability check failed", exc_info=True)
@@ -141,6 +148,7 @@ def _save_token_to_keyring(creds: Credentials) -> bool:
         return False
     try:
         import keyring
+
         keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, creds.to_json())
         return True
     except Exception:
@@ -154,6 +162,7 @@ def _load_token_from_keyring() -> Credentials | None:
         return None
     try:
         import keyring
+
         token_json = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
         if token_json:
             return Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
@@ -167,6 +176,7 @@ def _save_token_to_file(creds: Credentials) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     TOKEN_PATH.write_text(creds.to_json())
     import contextlib
+
     with contextlib.suppress(OSError):
         TOKEN_PATH.chmod(0o600)
 
@@ -234,12 +244,9 @@ def _get_service_account_creds(key_path: str, impersonate: str | None = None):
     key_file = Path(key_path)
     if not key_file.exists():
         raise FileNotFoundError(
-            f"Service account key not found: {key_path}\n"
-            "Set GOOGLE_SERVICE_ACCOUNT_KEY to a valid JSON key file path."
+            f"Service account key not found: {key_path}\nSet GOOGLE_SERVICE_ACCOUNT_KEY to a valid JSON key file path."
         )
-    creds = service_account.Credentials.from_service_account_file(
-        str(key_file), scopes=SCOPES
-    )
+    creds = service_account.Credentials.from_service_account_file(str(key_file), scopes=SCOPES)
     if impersonate:
         creds = creds.with_subject(impersonate)
     return creds
@@ -299,16 +306,64 @@ def _find_client_secret() -> Path:
     )
 
 
+def _complete_loopback_oauth(flow: InstalledAppFlow) -> Credentials:
+    """Finish an installed-app flow on a loopback callback socket.
+
+    Uses the flow's authorization URL, state, and PKCE verifier. The browser
+    still returns the authorization response to the local redirect URI.
+    """
+    with LoopbackCallbackServer() as server:
+        for line in server.describe():
+            print(line, file=sys.stderr)
+        if not server.ipv4_ok:
+            raise RuntimeError(
+                "The OAuth callback socket is not reachable from this process. The browser was not opened."
+            )
+        flow.redirect_uri = server.redirect_uri
+        auth_url, _state = flow.authorization_url()
+        print("Opening browser for Google OAuth...", file=sys.stderr)
+        print(
+            "Waiting for the browser to deliver the OAuth redirect. No authorization response has been received yet.",
+            file=sys.stderr,
+        )
+        print(
+            "Please visit this URL to authorize this application: " + auth_url,
+            file=sys.stderr,
+        )
+        try:
+            webbrowser.get().open(auth_url, new=1, autoraise=True)
+        except Exception:
+            print("Could not open a browser automatically. Open the URL above.", file=sys.stderr)
+        callback_uri = server.wait_for_oauth_redirect()
+        peer = server.callback_peer or "unknown"
+        print(
+            f"OAuth callback received from {peer}. Exchanging the authorization code.",
+            file=sys.stderr,
+        )
+        params = urllib.parse.parse_qs(urllib.parse.urlsplit(callback_uri).query)
+        if "error" in params and "code" not in params:
+            err = params["error"][0]
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", err):
+                err = "unrecognized_error"
+            raise RuntimeError(f"Google OAuth authorization failed: {err}")
+        if not callback_uri.startswith("http://"):
+            raise RuntimeError("OAuth callback URI is not a loopback http URL.")
+        flow.fetch_token(authorization_response="https://" + callback_uri.removeprefix("http://"))
+        creds = flow.credentials
+        if not isinstance(creds, Credentials):
+            raise RuntimeError("OAuth flow did not produce credentials.")
+        return creds
+
+
 def run_auth_flow() -> None:
     """Interactive auth flow — opens browser, saves token. Run once per profile."""
     if ACTIVE_PROFILE:
         print(f"Profile: {ACTIVE_PROFILE}", file=sys.stderr)
     client_secret = _find_client_secret()
     print(f"Using client secret: {client_secret}", file=sys.stderr)
-    print("Opening browser for Google OAuth...", file=sys.stderr)
 
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), SCOPES)
-    creds = flow.run_local_server(port=0)
+    creds = _complete_loopback_oauth(flow)
     _save_token(creds)
 
     location = f"OS keyring (key: {KEYRING_USERNAME})" if _keyring_available() else str(TOKEN_PATH)
@@ -333,9 +388,7 @@ def run_whoami() -> None:
 
     try:
         service = build("drive", "v3", credentials=creds)
-        about = execute_with_retry(
-            service.about().get(fields="user(emailAddress,displayName)")
-        )
+        about = execute_with_retry(service.about().get(fields="user(emailAddress,displayName)"))
     except Exception as e:
         print(f"Failed to query Google account: {e}", file=sys.stderr)
         sys.exit(1)
@@ -404,11 +457,39 @@ def apply_profile_override(profile: str | None) -> None:
     ]
 
 
+def _print_cli_help(argv0: str) -> None:
+    name = Path(argv0).name or "google-docs-mcp"
+    print(
+        f"""usage: {name} [-h] [--profile NAME] [--diagnose-loopback] [auth|whoami]
+
+  {name}                 Run the MCP server on stdio
+  {name} auth            Sign in with Google in a browser and save a token
+  {name} auth --diagnose-loopback
+                         Bind a new callback socket and report whether this
+                         process can connect. Does not contact Google.
+  {name} whoami          Print the signed-in account
+  --profile NAME         Use a named account profile
+
+-h and --help print this message and do not start authentication.
+""",
+        file=sys.stderr,
+    )
+
+
 def run_cli(mcp_server) -> None:
     """Shared CLI entry point for all three servers.
 
     Handles auth, whoami, and --profile before falling back to MCP stdio.
     """
+    args = sys.argv[1:]
+    if any(arg in {"-h", "--help"} for arg in args):
+        _print_cli_help(sys.argv[0])
+        return
+    if "--diagnose-loopback" in args:
+        if any(arg == "whoami" for arg in args):
+            print("whoami does not support --diagnose-loopback", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(diagnose_loopback())
     command, profile = parse_cli_args(sys.argv)
     if command or profile:
         apply_profile_override(profile)
