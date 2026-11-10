@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `auth --manual` pastes the Google redirect URL (or only the code) when the browser cannot reach a loopback listener. `--redirect-from-file` polls a file and deletes it after reading. Credentials are saved the same way as the browser flow.
+
 ### Fixed
 
 - `auth --help` and `--help` print command help and do not start the Google OAuth flow
