@@ -34,6 +34,12 @@ from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from shared.manual_auth import (
+    ManualAuthOptions,
+    complete_manual_oauth,
+    manual_flags_without_command,
+    parse_manual_cli,
+)
 from shared.oauth_loopback import LoopbackCallbackServer, diagnose_loopback
 
 SCOPES = [
@@ -355,7 +361,7 @@ def _complete_loopback_oauth(flow: InstalledAppFlow) -> Credentials:
         return creds
 
 
-def run_auth_flow() -> None:
+def run_auth_flow(options: ManualAuthOptions | None = None) -> None:
     """Interactive auth flow — opens browser, saves token. Run once per profile."""
     if ACTIVE_PROFILE:
         print(f"Profile: {ACTIVE_PROFILE}", file=sys.stderr)
@@ -363,7 +369,14 @@ def run_auth_flow() -> None:
     print(f"Using client secret: {client_secret}", file=sys.stderr)
 
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), SCOPES)
-    creds = _complete_loopback_oauth(flow)
+    if options is not None and options.manual:
+        try:
+            creds = complete_manual_oauth(flow, options)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(1)
+    else:
+        creds = _complete_loopback_oauth(flow)
     _save_token(creds)
 
     location = f"OS keyring (key: {KEYRING_USERNAME})" if _keyring_available() else str(TOKEN_PATH)
@@ -464,11 +477,19 @@ def _print_cli_help(argv0: str) -> None:
 
   {name}                 Run the MCP server on stdio
   {name} auth            Sign in with Google in a browser and save a token
+  {name} auth --manual   Sign in by pasting the redirect URL. Nothing listens
+                         locally. Use this when the browser cannot reach loopback.
   {name} auth --diagnose-loopback
                          Bind a new callback socket and report whether this
                          process can connect. Does not contact Google.
   {name} whoami          Print the signed-in account
   --profile NAME         Use a named account profile
+  --redirect-from-file PATH
+                         With --manual, poll this file for the pasted redirect,
+                         then delete the file.
+  --auth-url-file PATH   With --manual, also write the authorization URL here.
+  --manual-timeout SECONDS
+                         How long --manual waits for the paste (default 600).
 
 -h and --help print this message and do not start authentication.
 """,
@@ -485,16 +506,30 @@ def run_cli(mcp_server) -> None:
     if any(arg in {"-h", "--help"} for arg in args):
         _print_cli_help(sys.argv[0])
         return
+    try:
+        manual_options = parse_manual_cli(sys.argv)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
     if "--diagnose-loopback" in args:
+        if manual_options.manual or manual_flags_without_command(manual_options):
+            print("Choose either --diagnose-loopback or --manual.", file=sys.stderr)
+            sys.exit(2)
         if any(arg == "whoami" for arg in args):
             print("whoami does not support --diagnose-loopback", file=sys.stderr)
             sys.exit(2)
         sys.exit(diagnose_loopback())
     command, profile = parse_cli_args(sys.argv)
+    if manual_flags_without_command(manual_options) and not manual_options.manual:
+        print("--redirect-from-file, --auth-url-file, and --manual-timeout require --manual.", file=sys.stderr)
+        sys.exit(2)
+    if manual_options.manual and command != "auth":
+        print("--manual is only valid with the auth command.", file=sys.stderr)
+        sys.exit(2)
     if command or profile:
         apply_profile_override(profile)
     if command == "auth":
-        run_auth_flow()
+        run_auth_flow(manual_options if manual_options.manual else None)
         return
     if command == "whoami":
         run_whoami()
