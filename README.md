@@ -168,6 +168,21 @@ uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth
 
 Token saved to OS keyring (macOS Keychain, Windows Credential Locker, Linux libsecret) with file fallback.
 
+If the browser cannot open a connection to this machine (for example a managed Chrome policy blocks loopback, or consent happens on another device), paste the redirect instead. Nothing listens locally. The browser shows an error for `http://127.0.0.1:<port>/`; copy the full address bar and paste it into the waiting command. A Desktop OAuth client is required. State and PKCE are still checked.
+
+```bash
+uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth --manual
+uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth --manual --profile work
+```
+
+To feed a background process, write the authorization URL to a file and poll another file for the paste. The redirect file is deleted after it is read.
+
+```bash
+uvx --from git+https://github.com/DhilipBinny/MCP-GDrive google-docs-mcp auth --manual \
+  --auth-url-file /tmp/google-auth-url.txt \
+  --redirect-from-file /tmp/google-auth-redirect.txt
+```
+
 ### Named Profiles (multiple accounts)
 
 Use different Google accounts for different projects by setting a profile per MCP server:
